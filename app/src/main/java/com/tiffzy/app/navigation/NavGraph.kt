@@ -45,6 +45,7 @@ import com.tiffzy.app.ui.customer.profile.NotificationsScreen
 import com.tiffzy.app.ui.customer.profile.SettingsScreen
 import com.tiffzy.app.ui.customer.menu.LiveBillScreen
 import com.tiffzy.app.ui.customer.scanner.ScannerScreen
+import com.tiffzy.app.ui.customer.map.MapScreen
 import com.tiffzy.app.ui.payment.PaymentActivity
 import com.tiffzy.app.ui.components.PlaceholderScreen
 import com.tiffzy.app.data.repository.CartRepository
@@ -85,6 +86,7 @@ object Routes {
     const val Register = "register"
     const val Otp = "otp"
     const val Location = "location"
+    const val Map = "map"
     const val Home = "home"
     const val Search = "search"
     const val RestaurantDetail = "restaurant/{slug}"
@@ -336,7 +338,20 @@ fun NavGraph(
                     navController.navigate(Routes.Home) {
                         popUpTo(Routes.Location) { inclusive = true }
                     }
+                },
+                onOpenMap = {
+                    navController.navigate(Routes.Map)
                 }
+            )
+        }
+
+        composable(Routes.Map) {
+            MapScreen(
+                onBack = { navController.popBackStack() },
+                onRestaurantClick = { slug ->
+                    navController.navigate(Routes.menu(slug))
+                },
+                homeViewModel = homeViewModel
             )
         }
 
@@ -360,6 +375,9 @@ fun NavGraph(
                 locationName = locationName,
                 onChangeLocation = {
                     navController.navigate(Routes.Location)
+                },
+                onMapClick = {
+                    navController.navigate(Routes.Map)
                 },
                 onRestaurantClick = { slug ->
                     navController.navigate(Routes.menu(slug))

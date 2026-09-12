@@ -128,14 +128,14 @@ fun TiffzyRestaurantSmallCard(
 
     Card(
         modifier = modifier
-            .width(160.dp) // Compact width
+            .width(135.dp)
             .clickable { onClick() },
-        shape = MaterialTheme.shapes.large,
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column {
-            Box(modifier = Modifier.height(90.dp).fillMaxWidth()) {
+            Box(modifier = Modifier.height(72.dp).fillMaxWidth()) {
                 val imageUrl = ImageUtils.resolveImageUrl(restaurant.logo ?: restaurant.bannerUrl)
                 
                 SubcomposeAsyncImage(
@@ -160,21 +160,21 @@ fun TiffzyRestaurantSmallCard(
                 )
                 
                 Surface(
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(3.dp),
                     color = Color.White.copy(alpha = 0.9f),
                     shape = MaterialTheme.shapes.extraSmall
                 ) {
-                    Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(rating, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color.Black)
-                        Icon(Icons.Default.Star, null, modifier = Modifier.size(10.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.Star, null, modifier = Modifier.size(9.dp), tint = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
             
-            Column(modifier = Modifier.padding(8.dp)) {
+            Column(modifier = Modifier.padding(6.dp)) {
                 Text(
                     text = restaurant.name,
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Black,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -202,7 +202,7 @@ fun TiffzyDiscoveryItemCard(
         modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() },
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 0.dp, bottomEnd = 0.dp),
+        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 0.dp, bottomEnd = 0.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
@@ -213,8 +213,8 @@ fun TiffzyDiscoveryItemCard(
                     contentDescription = item.name,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(85.dp) 
-                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 0.dp, bottomEnd = 0.dp)),
+                        .height(70.dp) 
+                        .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 0.dp, bottomEnd = 0.dp)),
                     contentScale = ContentScale.Crop,
                     placeholder = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Restaurant),
                     error = androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Default.Restaurant)

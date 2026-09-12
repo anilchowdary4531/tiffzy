@@ -16,6 +16,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.outlined.Map
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TiffzyTopBar(
@@ -24,6 +27,7 @@ fun TiffzyTopBar(
     onSubtitleClick: (() -> Unit)? = null,
     onBackClick: (() -> Unit)? = null,
     onNotificationsClick: (() -> Unit)? = null,
+    onMapClick: (() -> Unit)? = null,
     hasNotification: Boolean = true,
     navigationIcon: @Composable () -> Unit = {
         if (onBackClick != null) {
@@ -37,6 +41,15 @@ fun TiffzyTopBar(
         }
     },
     actions: @Composable RowScope.() -> Unit = {
+        if (onMapClick != null) {
+            IconButton(onClick = onMapClick) {
+                Icon(
+                    imageVector = Icons.Default.Map,
+                    contentDescription = "Map View",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
         if (onNotificationsClick != null) {
             Box {
                 IconButton(onClick = onNotificationsClick) {
@@ -64,44 +77,38 @@ fun TiffzyTopBar(
             modifier = Modifier.statusBarsPadding(), // Handle status bar padding
             title = {
                 // Deliver to style
-                Column(
+                Row(
                     modifier = Modifier
                         .clickable { onSubtitleClick() }
-                        .padding(vertical = 4.dp)
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                 ) {
+                    Icon(
+                        Icons.Default.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
                     Text(
-                        text = "Deliver to",
+                        text = "DELIVER TO ",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.ExtraBold
                     )
-                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.LocationOn,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Home", // Defaulting to Home as per screenshot
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.onSurface // Use World Class Black
-                        )
-                        Icon(
-                            Icons.Default.ArrowDropDown,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
                     Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = subtitle ?: "Home",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Icon(
+                        Icons.Default.ArrowDropDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurface
                     )
                 }
             },

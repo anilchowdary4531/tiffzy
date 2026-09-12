@@ -121,11 +121,11 @@ fun MainScreen(
                 }
                 
                 NavigationBar(
-                    modifier = Modifier.height(80.dp), // Increased height for better visibility
+                    modifier = Modifier.height(56.dp),
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.primary,
-                    tonalElevation = 8.dp, // Added shadow for attractiveness
-                    windowInsets = NavigationBarDefaults.windowInsets // Properly handle system bottom bar
+                    tonalElevation = 6.dp,
+                    windowInsets = NavigationBarDefaults.windowInsets
                 ) {
                     bottomNavItems.forEachIndexed { index, item ->
                         val isSelected = pagerState.currentPage == index
@@ -134,7 +134,7 @@ fun MainScreen(
                                 Icon(
                                     imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
                                     contentDescription = item.label,
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             },
                             label = { 

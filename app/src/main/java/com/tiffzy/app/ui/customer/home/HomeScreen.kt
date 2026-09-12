@@ -75,6 +75,7 @@ fun HomeScreen(
     onViewProfile: () -> Unit,
     onNotificationsClick: () -> Unit,
     onScanClick: () -> Unit,
+    onMapClick: () -> Unit = {},
     onDeleteAccount: () -> Unit = {},
     onNavigateToWeb: (String, String) -> Unit = { _, _ -> },
     locationName: String? = null,
@@ -96,7 +97,8 @@ fun HomeScreen(
                 title = "Tiffzy",
                 subtitle = locationName ?: "Set Location",
                 onSubtitleClick = onChangeLocation,
-                onNotificationsClick = onNotificationsClick
+                onNotificationsClick = onNotificationsClick,
+                onMapClick = onMapClick
             ) 
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -116,7 +118,7 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(0.dp), // Zero spacing between rows
                         contentPadding = PaddingValues(
-                            bottom = Dimens.PaddingExtraLarge
+                            bottom = 4.dp
                         )
                     ) {
                         // 1. Promo Banner Slider
@@ -133,8 +135,8 @@ fun HomeScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .padding(horizontal = Dimens.PaddingMedium)
-                                    .padding(top = Dimens.PaddingSmall)
+                                    .padding(horizontal = Dimens.PaddingSmall)
+                                    .padding(top = 2.dp)
                             )
                         }
 
@@ -163,8 +165,8 @@ fun HomeScreen(
                             item {
                                 SectionHeader(
                                     title = "Top Restaurants",
-                                    actionText = "See all",
-                                    onActionClick = { /* See all */ },
+                                    actionText = "Map View 🗺️",
+                                    onActionClick = onMapClick,
                                     modifier = Modifier.padding(horizontal = Dimens.PaddingMedium)
                                 )
                                 LazyRow(
@@ -202,7 +204,7 @@ fun HomeScreen(
                                                 item = item,
                                                 onClick = { onRestaurantClick(item.restaurant.slug) },
                                                 onAddClick = { viewModel.addToCart(item) },
-                                                modifier = Modifier.width(120.dp)
+                                                modifier = Modifier.width(105.dp)
                                             )
                                         }
                                     }
@@ -289,11 +291,11 @@ fun HomeScreenCategoryItem(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(56.dp) // Decreased from 64.dp
+            .width(48.dp)
             .clickable { onClick() }
     ) {
         Surface(
-            modifier = Modifier.size(48.dp), // Decreased from 56.dp
+            modifier = Modifier.size(40.dp),
             shape = CircleShape,
             color = if (category.imageUrl.isNullOrEmpty()) 
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) 
@@ -316,16 +318,16 @@ fun HomeScreenCategoryItem(
                     Icon(
                         imageVector = getCategoryIcon(category.name),
                         contentDescription = category.name,
-                        modifier = Modifier.size(24.dp), // Decreased from 28.dp
+                        modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
             }
         }
-        Spacer(modifier = Modifier.height(4.dp)) // Decreased from 6.dp
+        Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = category.name,
-            style = MaterialTheme.typography.labelSmall, // Changed to labelSmall for compact look
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
@@ -365,15 +367,15 @@ fun PromoBannerSlider(
             state = pagerState,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(140.dp)
-                .clip(MaterialTheme.shapes.extraLarge)
+                .height(115.dp)
+                .clip(MaterialTheme.shapes.large)
         ) { page ->
             val banner = banners[page]
             Card(
                 modifier = Modifier
                     .fillMaxSize()
                     .clickable { onBannerClick(banner.actionUrl) },
-                shape = MaterialTheme.shapes.extraLarge,
+                shape = MaterialTheme.shapes.large,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -398,8 +400,8 @@ fun PromoBannerSlider(
                             text = banner.title,
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
-                                .padding(Dimens.PaddingMedium),
-                            style = MaterialTheme.typography.titleLarge,
+                                .padding(Dimens.PaddingSmall),
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Black,
                             color = Color.White
                         )
@@ -412,7 +414,7 @@ fun PromoBannerSlider(
         if (banners.size > 1) {
             Row(
                 modifier = Modifier
-                    .padding(top = 8.dp)
+                    .padding(top = 4.dp)
                     .fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center
             ) {
@@ -426,7 +428,7 @@ fun PromoBannerSlider(
                             .padding(2.dp)
                             .clip(CircleShape)
                             .background(color)
-                            .size(6.dp)
+                            .size(5.dp)
                     )
                 }
             }
@@ -439,8 +441,8 @@ fun PromoBanner(modifier: Modifier = Modifier) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .height(140.dp), // Decreased from 160.dp
-        shape = MaterialTheme.shapes.extraLarge,
+            .height(115.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -471,37 +473,23 @@ fun PromoBanner(modifier: Modifier = Modifier) {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .padding(Dimens.PaddingLarge)
+                    .padding(Dimens.PaddingMedium)
                     .fillMaxWidth(0.6f),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
                     text = "Tasty Food Delivered Fast",
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Black,
                     color = Color.White,
-                    lineHeight = 32.sp
+                    lineHeight = 24.sp
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Order now and enjoy delicious meals!",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.8f)
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(
-                    onClick = { /* Action */ },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
-                    shape = MaterialTheme.shapes.medium,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Text("Order Now", color = Color.White, fontWeight = FontWeight.Bold)
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp).padding(start = 4.dp)
-                    )
-                }
             }
         }
     }
@@ -517,13 +505,13 @@ fun SectionHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 0.dp), // Removed all top padding
+            .padding(top = 4.dp, bottom = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Black,
             color = MaterialTheme.colorScheme.onSurface
         )
