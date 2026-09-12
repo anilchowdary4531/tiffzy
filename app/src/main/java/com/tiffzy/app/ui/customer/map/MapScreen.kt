@@ -32,7 +32,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.launch
 import com.tiffzy.app.data.model.Restaurant
 import com.tiffzy.app.ui.components.TiffzyTopBar
 import com.tiffzy.app.ui.customer.home.HomeViewModel
@@ -64,13 +63,6 @@ data class MapSelectedRestaurant(
     val slug: String?,
     val isTest: Boolean = false
 )
-
-object MapConfig {
-    const val DEFAULT_LATITUDE = 12.9716
-    const val DEFAULT_LONGITUDE = 77.5946
-    const val DEFAULT_STYLE_URL = "https://demotiles.maplibre.org/style.json"
-    const val STYLE_URL = "https://demotiles.maplibre.org/style.json"
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -405,7 +397,7 @@ private fun addRealRestaurantMarkers(map: MapLibreMap, restaurants: List<Restaur
                 MarkerOptions()
                     .position(LatLng(lat, lng))
                     .title(restaurant.name)
-                    .snippet(restaurant.addressLine1 ?: "Tiffzy Partner Outlet")
+                    .snippet(restaurant.address ?: "Tiffzy Partner Outlet")
             )
             addedCount++
         }
@@ -420,9 +412,7 @@ private fun addRealRestaurantMarkers(map: MapLibreMap, restaurants: List<Restaur
  */
 private fun moveToUserLocation(context: Context, map: MapLibreMap?) {
     if (map == null) return
-    val locationHelper = LocationHelper(context)
-    kotlinx.coroutines.MainScope().launch {
-        val loc = locationHelper.getCurrentLocation()
+    LocationHelper.getCurrentLocation(context) { loc ->
         if (loc != null) {
             val userPos = LatLng(loc.latitude, loc.longitude)
             map.animateCamera(CameraUpdateFactory.newLatLngZoom(userPos, 14.0))
