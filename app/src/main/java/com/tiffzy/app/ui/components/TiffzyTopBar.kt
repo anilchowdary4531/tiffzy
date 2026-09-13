@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.sp
 
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.filled.Search
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -27,6 +28,7 @@ fun TiffzyTopBar(
     onSubtitleClick: (() -> Unit)? = null,
     onBackClick: (() -> Unit)? = null,
     onNotificationsClick: (() -> Unit)? = null,
+    onSearchClick: (() -> Unit)? = null,
     onMapClick: (() -> Unit)? = null,
     hasNotification: Boolean = true,
     navigationIcon: @Composable () -> Unit = {
@@ -41,12 +43,21 @@ fun TiffzyTopBar(
         }
     },
     actions: @Composable RowScope.() -> Unit = {
+        if (onSearchClick != null) {
+            IconButton(onClick = onSearchClick) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
         if (onMapClick != null) {
             IconButton(onClick = onMapClick) {
                 Icon(
                     imageVector = Icons.Default.Map,
                     contentDescription = "Map View",
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
             }
         }

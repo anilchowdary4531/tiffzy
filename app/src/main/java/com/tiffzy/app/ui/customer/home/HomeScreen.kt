@@ -75,6 +75,7 @@ fun HomeScreen(
     onViewProfile: () -> Unit,
     onNotificationsClick: () -> Unit,
     onScanClick: () -> Unit,
+    onSearchClick: () -> Unit = {},
     onMapClick: () -> Unit = {},
     onDeleteAccount: () -> Unit = {},
     onNavigateToWeb: (String, String) -> Unit = { _, _ -> },
@@ -98,6 +99,7 @@ fun HomeScreen(
                 subtitle = locationName ?: "Set Location",
                 onSubtitleClick = onChangeLocation,
                 onNotificationsClick = onNotificationsClick,
+                onSearchClick = onSearchClick,
                 onMapClick = onMapClick
             ) 
         },
