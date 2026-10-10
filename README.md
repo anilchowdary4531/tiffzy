@@ -86,3 +86,4 @@ npm install --omit=dev
 pm2 start src/server.js --name cafe-backend --update-env
 pm2 save
 ```
+Deployment workflow test
