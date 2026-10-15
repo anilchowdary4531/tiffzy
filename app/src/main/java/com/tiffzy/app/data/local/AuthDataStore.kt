@@ -3,6 +3,7 @@ package com.tiffzy.app.data.local
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -28,6 +29,7 @@ class AuthDataStore(context: Context) {
         private val REMEMBER_SESSION = androidx.datastore.preferences.core.booleanPreferencesKey("remember_session")
         private val AUTO_DETECT_LOCATION = androidx.datastore.preferences.core.booleanPreferencesKey("auto_detect_location")
         private val NOTIFICATIONS_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("notifications_enabled")
+        private val DARK_THEME = booleanPreferencesKey("dark_theme")
     }
 
     val authToken: Flow<String?> = appContext.dataStore.data.map { preferences ->
@@ -48,6 +50,10 @@ class AuthDataStore(context: Context) {
 
     val notificationsEnabled: Flow<Boolean> = appContext.dataStore.data.map { preferences ->
         preferences[NOTIFICATIONS_ENABLED] ?: true
+    }
+
+    val darkTheme: Flow<Boolean> = appContext.dataStore.data.map { preferences ->
+        preferences[DARK_THEME] ?: false
     }
 
     val userRole: Flow<String?> = appContext.dataStore.data.map { preferences ->
@@ -80,11 +86,12 @@ class AuthDataStore(context: Context) {
         }
     }
 
-    suspend fun updateSettings(remember: Boolean? = null, autoDetect: Boolean? = null, notify: Boolean? = null) {
+    suspend fun updateSettings(remember: Boolean? = null, autoDetect: Boolean? = null, notify: Boolean? = null, darkTheme: Boolean? = null) {
         appContext.dataStore.edit { preferences ->
             remember?.let { preferences[REMEMBER_SESSION] = it }
             autoDetect?.let { preferences[AUTO_DETECT_LOCATION] = it }
             notify?.let { preferences[NOTIFICATIONS_ENABLED] = it }
+            darkTheme?.let { preferences[DARK_THEME] = it }
         }
     }
 

@@ -34,8 +34,8 @@ android {
         minSdk = 24
         targetSdk = 36
 
-        versionCode = 18
-        versionName = "1.0.17"
+        versionCode = 39
+        versionName = "1.0.38"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -44,6 +44,7 @@ android {
         debug {
             buildConfigField("String", "BASE_URL", "\"https://api.tiffzy.com/\"")
             manifestPlaceholders["usesCleartextTraffic"] = "false"
+            manifestPlaceholders["MAPS_API_KEY"] = "AIzaSyD5_Z29tj5VjWrY-_oLoMTIrGXmpIU4Pr4"
         }
         release {
             signingConfig = signingConfigs.getByName("release")
@@ -51,6 +52,7 @@ android {
             isShrinkResources = true
             buildConfigField("String", "BASE_URL", "\"https://api.tiffzy.com/\"")
             manifestPlaceholders["usesCleartextTraffic"] = "false"
+            manifestPlaceholders["MAPS_API_KEY"] = "AIzaSyD5_Z29tj5VjWrY-_oLoMTIrGXmpIU4Pr4"
 
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -67,6 +69,10 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -91,7 +97,6 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0") // Required for some SDKs
     implementation(libs.play.services.location)
     implementation(libs.play.services.auth)
-    implementation(libs.play.services.basement)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
     implementation(libs.razorpay)
@@ -109,6 +114,11 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.socketio)
     implementation(libs.cashfree)
+
+    // Map SDK
+    implementation(libs.maplibre.android.sdk)
+    implementation(libs.play.services.maps)
+    implementation(libs.maps.compose)
 
     // Firebase AI temporarily disabled.
     // We will enable this later after Firebase configuration.
