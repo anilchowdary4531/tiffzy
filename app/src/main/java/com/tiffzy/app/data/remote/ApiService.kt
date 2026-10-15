@@ -95,10 +95,34 @@ interface ApiService {
         @Body request: VerifyPaymentRequest
     ): SimpleResponse
 
+    @GET("api/wallet")
+    suspend fun getWallet(): WalletResponse
+
+    @POST("api/wallet/pay-order")
+    suspend fun payOrderWithWallet(
+        @Body request: WalletPayOrderRequest
+    ): WalletPayOrderResponse
+
+    @GET("api/wallet/transactions")
+    suspend fun getWalletTransactions(
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 20
+    ): WalletTransactionsResponse
+
+    @POST("api/wallet/topup/create")
+    suspend fun createWalletTopup(
+        @Body request: WalletTopupCreateRequest
+    ): WalletTopupCreateResponse
+
+    @POST("api/wallet/topup/verify")
+    suspend fun verifyWalletTopup(
+        @Body request: WalletTopupVerifyRequest
+    ): WalletTopupVerifyResponse
+
     @GET("customer/notifications")
     suspend fun getNotifications(): NotificationsResponse
 
-    @POST("customer/notifications/{id}/read")
+    @PATCH("customer/notifications/{id}/read")
     suspend fun markNotificationRead(@Path("id") id: Int): SimpleResponse
 
     @POST("customer/public/delete-account/request-otp")

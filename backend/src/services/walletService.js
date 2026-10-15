@@ -188,6 +188,10 @@ export const createTopupSession = async (
     orderNote: `Tiffzy Wallet Top-up ₹${numAmount}`,
   });
 
+  const paymentSessionId = cfResponse.payment_session_id || cfResponse.paymentSessionId || null;
+  const cfOrderId = cfResponse.cf_order_id || cfResponse.cfOrderId || null;
+  const isProduction = cfResponse.is_production ?? cfResponse.isProduction ?? false;
+
   // Save topup record
   await prisma.walletTopup.create({
     data: {
@@ -197,7 +201,7 @@ export const createTopupSession = async (
       amount: numAmount,
       currency: WALLET_CONFIG.CURRENCY,
       gateway: "CASHFREE",
-      gatewayOrderId: cfResponse.paymentSessionId || topupTxnId,
+      gatewayOrderId: paymentSessionId || topupTxnId,
       status: "PENDING",
       idempotencyKey: cleanIdempotencyKey,
     },
@@ -206,9 +210,10 @@ export const createTopupSession = async (
   return {
     topupTxnId,
     amount: numAmount,
-    paymentSessionId: cfResponse.paymentSessionId,
-    cfOrderId: cfResponse.cfOrderId,
+    paymentSessionId,
+    cfOrderId,
     gateway: "CASHFREE",
+    isProduction,
   };
 };
 
