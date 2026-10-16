@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.QrCodeScanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,6 +31,7 @@ fun TiffzyTopBar(
     onNotificationsClick: (() -> Unit)? = null,
     onSearchClick: (() -> Unit)? = null,
     onMapClick: (() -> Unit)? = null,
+    onScanClick: (() -> Unit)? = null,
     hasNotification: Boolean = true,
     navigationIcon: @Composable () -> Unit = {
         if (onBackClick != null) {
@@ -48,6 +50,15 @@ fun TiffzyTopBar(
                 Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+        if (onScanClick != null) {
+            IconButton(onClick = onScanClick) {
+                Icon(
+                    imageVector = Icons.Default.QrCodeScanner,
+                    contentDescription = "Scan QR Code",
                     tint = MaterialTheme.colorScheme.onSurface
                 )
             }

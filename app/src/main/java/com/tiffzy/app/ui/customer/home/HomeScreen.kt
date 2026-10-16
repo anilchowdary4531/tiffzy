@@ -100,7 +100,7 @@ fun HomeScreen(
                 onSubtitleClick = onChangeLocation,
                 onNotificationsClick = onNotificationsClick,
                 onSearchClick = onSearchClick,
-                onMapClick = onMapClick
+                onScanClick = onScanClick
             ) 
         },
         containerColor = MaterialTheme.colorScheme.background
