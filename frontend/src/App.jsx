@@ -20,6 +20,9 @@ import InventoryPage from "./pages/InventoryPage";
 import ShippingPolicy from "./pages/ShippingPolicy";
 import LegalDisclosure from "./pages/LegalDisclosure";
 import DeleteAccount from "./pages/DeleteAccount";
+import JekkaRameshProfile from "./pages/JekkaRameshProfile";
+import ThamineniAnilKumarProfile from "./pages/ThamineniAnilKumarProfile";
+import TobaccoPage from "./pages/TobaccoPage";
 
 import Cart from "./pages/Cart";
 import Login from "./pages/Login";
@@ -40,7 +43,10 @@ import Dashboard from "./pages/Dashboard";
 import AdminLayout from "./layouts/AdminLayout";
 import AuthProvider from "./context/AuthContext";
 import ProtectedRoute from "./routes/ProtectedRoute";
+import SupplierProtectedRoute from "./routes/SupplierProtectedRoute";
 import { StaffSocketProvider } from "./context/StaffSocketContext.jsx";
+import { CustomerNotificationProvider } from "./context/CustomerNotificationContext.jsx";
+import { TableStateProvider } from "./context/TableStateContext.jsx";
 
 // ============================
 // OWNER / RESTAURANT PAGES
@@ -49,13 +55,26 @@ import OwnerDashboard from "./pages/admin/OwnerDashboard";
 import OwnerOrders from "./pages/admin/OwnerOrders";
 import MenuStudio from "./pages/admin/MenuStudio";
 import OwnerTables from "./pages/admin/OwnerTables";
+import OwnerReservations from "./pages/admin/OwnerReservations";
 import OwnerKitchenLive from "./pages/admin/OwnerKitchenLive";
 import OwnerAnalytics from "./pages/admin/OwnerAnalytics";
 import OwnerFinance from "./pages/admin/OwnerFinance";
 import OwnerStaff from "./pages/admin/OwnerStaff";
+import OwnerStaffSchedules from "./pages/admin/OwnerStaffSchedules";
+import OwnerStaffAttendance from "./pages/admin/OwnerStaffAttendance";
+import OwnerStaffTasks from "./pages/admin/OwnerStaffTasks";
+import StaffDashboard from "./pages/staff/StaffDashboard";
 import OwnerSettings from "./pages/admin/OwnerSettings";
 import OwnerNotifications from "./pages/admin/OwnerNotifications";
 import OwnerPayLater from "./pages/admin/OwnerPayLater";
+import OwnerInventory from "./pages/admin/OwnerInventory";
+import OwnerShiftManager from "./pages/admin/OwnerShiftManager";
+import OwnerReports from "./pages/admin/OwnerReports";
+import OwnerAuditLogs from "./pages/admin/OwnerAuditLogs";
+import OwnerCustomerManager from "./pages/admin/OwnerCustomerManager";
+import OwnerCustomerDetail from "./pages/admin/OwnerCustomerDetail";
+import OwnerDiscounts from "./pages/admin/OwnerDiscounts";
+import OwnerLoyalty from "./pages/admin/OwnerLoyalty";
 import RestaurantPublicMenu from "./pages/restaurant/RestaurantPublicMenu";
 import RestaurantMenu from "./pages/restaurant/RestaurantMenu";
 import SuperAdminDashboard from "./pages/super-admin/SuperAdminDashboard";
@@ -65,7 +84,37 @@ import SuperAdminSettings from "./pages/super-admin/SuperAdminSettings";
 import SuperAdminCategories from "./pages/super-admin/SuperAdminCategories";
 import SuperAdminBanners from "./pages/super-admin/SuperAdminBanners";
 import SuperAdminRestaurantProfiles from "./pages/super-admin/SuperAdminRestaurantProfiles";
+import SuperAdminRestaurantMap from "./pages/super-admin/SuperAdminRestaurantMap";
 import SuperAdminWalletManagement from "./pages/super-admin/SuperAdminWalletManagement";
+import SupplierLogin from "./pages/supplier/SupplierLogin";
+import SupplierDashboard from "./pages/supplier/SupplierDashboard";
+import OwnerSupplyMarketplace from "./pages/admin/OwnerSupplyMarketplace";
+import OwnerSupplyChainIntelligence from "./pages/admin/OwnerSupplyChainIntelligence";
+import OwnerSupplyChainInventory from "./pages/admin/OwnerSupplyChainInventory";
+import OwnerSupplyChainInventoryDetail from "./pages/admin/OwnerSupplyChainInventoryDetail";
+import OwnerSupplyChainLowStock from "./pages/admin/OwnerSupplyChainLowStock";
+import OwnerSupplyChainExpiry from "./pages/admin/OwnerSupplyChainExpiry";
+import OwnerSupplyChainMovements from "./pages/admin/OwnerSupplyChainMovements";
+import OwnerSupplyChainAdjustments from "./pages/admin/OwnerSupplyChainAdjustments";
+import OwnerSupplyChainValuation from "./pages/admin/OwnerSupplyChainValuation";
+import OwnerSupplyChainSuppliers from "./pages/admin/OwnerSupplyChainSuppliers";
+import OwnerSupplyChainPurchaseRequests from "./pages/admin/OwnerSupplyChainPurchaseRequests";
+import OwnerSupplyChainPurchaseOrders from "./pages/admin/OwnerSupplyChainPurchaseOrders";
+import OwnerSupplyChainReceiving from "./pages/admin/OwnerSupplyChainReceiving";
+import OwnerSupplyChainPurchaseReturns from "./pages/admin/OwnerSupplyChainPurchaseReturns";
+import OwnerSupplyChainInvoices from "./pages/admin/OwnerSupplyChainInvoices";
+import OwnerSupplyChainWarehouse from "./pages/admin/OwnerSupplyChainWarehouse";
+import OwnerSupplyChainTransfers from "./pages/admin/OwnerSupplyChainTransfers";
+import OwnerSupplyChainStockCounts from "./pages/admin/OwnerSupplyChainStockCounts";
+import OwnerSupplyChainRecipes from "./pages/admin/OwnerSupplyChainRecipes";
+import OwnerSupplyChainConsumption from "./pages/admin/OwnerSupplyChainConsumption";
+import OwnerSupplyChainWastage from "./pages/admin/OwnerSupplyChainWastage";
+import OwnerSupplyChainMarketplace from "./pages/admin/OwnerSupplyChainMarketplace";
+import OwnerSupplyChainNegotiations from "./pages/admin/OwnerSupplyChainNegotiations";
+import OwnerSupplyChainPayments from "./pages/admin/OwnerSupplyChainPayments";
+import OwnerSupplyChainReports from "./pages/admin/OwnerSupplyChainReports";
+import OwnerSupplyChainSettings from "./pages/admin/OwnerSupplyChainSettings";
+import SuperAdminSupplyChain from "./pages/super-admin/SuperAdminSupplyChain";
 import NewOrder from "./pages/admin/NewOrder.jsx";
 import PaymentSuccess from "./pages/admin/PaymentSuccess.jsx";
 import Kitchen from "./pages/Kitchen.jsx";
@@ -73,7 +122,15 @@ import KitchenChefDetail from "./pages/KitchenChefDetail.jsx";
 import StaffProfile from "./pages/StaffProfile.jsx";
 import Server from "./pages/Server.jsx";
 
+import PrinterSettings from "./pages/admin/PrinterSettings.jsx";
+import KotHistoryPage from "./pages/admin/KotHistoryPage.jsx";
 import OwnerLayout from "./layouts/OwnerLayout.jsx";
+import OwnerDeliveryPartners from "./pages/admin/OwnerDeliveryPartners.jsx";
+import OwnerDeliveryManager from "./pages/admin/OwnerDeliveryManager.jsx";
+import DriverDeliveryStudio from "./pages/driver/DriverDeliveryStudio.jsx";
+import TrackOrderPage from "./pages/customer/TrackOrderPage.jsx";
+import CustomerQrLandingPage from "./pages/customer/CustomerQrLandingPage.jsx";
+import CustomerDigitalMenuPage from "./pages/customer/CustomerDigitalMenuPage.jsx";
 
 export default function App() {
     const location = useLocation();
@@ -81,8 +138,10 @@ export default function App() {
     return (
         <AuthProvider>
             <StaffSocketProvider>
-                <div className="theme-adaptive min-h-screen">
-                    <Routes>
+                <TableStateProvider>
+                    <CustomerNotificationProvider>
+                        <div className="theme-adaptive min-h-screen">
+                        <Routes>
 
                     {/* ================================= */}
                     {/* LEGAL & PUBLIC INFO (High Priority) */}
@@ -101,7 +160,10 @@ export default function App() {
                     <Route path="/refund-policy" element={<RefundPolicy />} />
                     <Route path="/shipping-policy" element={<ShippingPolicy />} />
                     <Route path="/contact-us" element={<ContactUs />} />
+                    <Route path="/about" element={<Navigate to="/about-us" replace />} />
                     <Route path="/about-us" element={<AboutUs />} />
+                    <Route path="/about/jekka-ramesh" element={<JekkaRameshProfile />} />
+                    <Route path="/about/thamineni-anil-kumar" element={<ThamineniAnilKumarProfile />} />
                     <Route path="/help-center" element={<HelpCenter />} />
                     <Route path="/delete-account" element={<DeleteAccount />} />
                     <Route path="/pricing" element={<Pricing />} />
@@ -235,6 +297,36 @@ export default function App() {
                         }
                     />
                     <Route
+                        path="/profile/loyalty"
+                        element={
+                            <>
+                                <Navbar />
+                                <Profile section="loyalty" />
+                                <Footer />
+                            </>
+                        }
+                    />
+                    <Route
+                        path="/profile/offers"
+                        element={
+                            <>
+                                <Navbar />
+                                <Profile section="offers" />
+                                <Footer />
+                            </>
+                        }
+                    />
+                    <Route
+                        path="/profile/reservations"
+                        element={
+                            <>
+                                <Navbar />
+                                <Profile section="reservations" />
+                                <Footer />
+                            </>
+                        }
+                    />
+                    <Route
                         path="/profile/settings"
                         element={
                             <>
@@ -244,6 +336,7 @@ export default function App() {
                             </>
                         }
                     />
+
 
                     {/* Backward compatible alias */}
                     <Route path="/orders/history" element={<Navigate to="/profile/order-history" replace />} />
@@ -258,6 +351,28 @@ export default function App() {
                             </>
                         }
                     />
+
+                    <Route
+                        path="/orders/:orderId/track"
+                        element={
+                            <>
+                                <Navbar />
+                                <TrackOrderPage />
+                                <Footer />
+                            </>
+                        }
+                    />
+
+                    <Route
+                        path="/driver/deliveries"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CASHIER", "STAFF", "DRIVER"]}>
+                                <DriverDeliveryStudio />
+                            </ProtectedRoute>
+                        }
+                    />
+
+                    <Route path="/tobacco" element={<TobaccoPage />} />
 
                     {/* ================================= */}
                     {/* STAFF REAL-TIME PAGES */}
@@ -283,6 +398,22 @@ export default function App() {
 
                     <Route
                         path="/kitchen"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "CHEF"]}>
+                                <Kitchen />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/kitchen/profile"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "CHEF"]}>
+                                <Kitchen />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/kitchen/notifications"
                         element={
                             <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "CHEF"]}>
                                 <Kitchen />
@@ -322,9 +453,41 @@ export default function App() {
                             </ProtectedRoute>
                         }
                     />
+                    <Route
+                        path="/waiter/profile"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CASHIER"]}>
+                                <Server />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/waiter/notifications"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CASHIER"]}>
+                                <Server />
+                            </ProtectedRoute>
+                        }
+                    />
 
                     <Route
                         path="/server"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CASHIER"]}>
+                                <Server />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/server/profile"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CASHIER"]}>
+                                <Server />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/server/notifications"
                         element={
                             <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CASHIER"]}>
                                 <Server />
@@ -337,9 +500,16 @@ export default function App() {
                     {/* ================================= */}
 
                     <Route path="/r/:slug" element={<Landing />} />
+                    <Route path="/r/:slug/tobacco" element={<TobaccoPage />} />
                     <Route path="/r/:slug/menu" element={<RestaurantPublicMenu key={`${location.pathname}${location.search}`} />} />
+                    <Route path="/m/:slug/tobacco" element={<TobaccoPage />} />
+                    <Route path="/m/:slug/:table/tobacco" element={<TobaccoPage />} />
                     <Route path="/m/:slug/:table?" element={<RestaurantMenu key={`${location.pathname}${location.search}`} />} />
                     <Route path="/debug/menu/:slug/:table?" element={<RestaurantMenu key={`${location.pathname}${location.search}`} />} />
+                    <Route path="/order/table/:token/tobacco" element={<TobaccoPage />} />
+                    <Route path="/order/table/:token" element={<CustomerQrLandingPage />} />
+                    <Route path="/menu/:token/tobacco" element={<TobaccoPage />} />
+                    <Route path="/menu/:token" element={<CustomerDigitalMenuPage />} />
 
                     {/* ================================= */}
                     {/* SUPER ADMIN PANEL */}
@@ -358,6 +528,14 @@ export default function App() {
                         element={
                             <ProtectedRoute role="SUPER_ADMIN">
                                 <SuperAdminRestaurantProfiles />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/super-admin/restaurant-map"
+                        element={
+                            <ProtectedRoute role="SUPER_ADMIN">
+                                <SuperAdminRestaurantMap />
                             </ProtectedRoute>
                         }
                     />
@@ -387,6 +565,22 @@ export default function App() {
                     />
                     <Route
                         path="/super-admin/users"
+                        element={
+                            <ProtectedRoute role="SUPER_ADMIN">
+                                <SuperAdminUsers />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/super-admin/staff"
+                        element={
+                            <ProtectedRoute role="SUPER_ADMIN">
+                                <SuperAdminUsers />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/super-admin/customers"
                         element={
                             <ProtectedRoute role="SUPER_ADMIN">
                                 <SuperAdminUsers />
@@ -431,19 +625,105 @@ export default function App() {
                         }
                     >
                         <Route index element={<OwnerDashboard />} />
+                        <Route path="billing" element={<NewOrder />} />
+                        <Route path="billing-desk" element={<NewOrder />} />
+                        <Route path="new-order" element={<NewOrder />} />
+                        <Route path="pos" element={<NewOrder />} />
                         <Route path="orders" element={<OwnerOrders />} />
-                        <Route path="online-orders" element={<OwnerOrders sourceFilter="ONLINE" />} />
+                        <Route path="online-orders" element={<Navigate to="/owner/kitchen?tab=live" replace />} />
                         <Route path="menu" element={<MenuStudio />} />
                         <Route path="tables" element={<OwnerTables />} />
+                        <Route path="reservations" element={<OwnerReservations />} />
+                        <Route path="inventory" element={<OwnerInventory />} />
                         <Route path="kitchen" element={<OwnerKitchenLive />} />
+                        <Route path="printers" element={<PrinterSettings />} />
+                        <Route path="kot-history" element={<Navigate to="/owner/kitchen?tab=live&view=history" replace />} />
                         <Route path="analytics" element={<OwnerAnalytics />} />
+                        <Route path="reports" element={<OwnerReports />} />
                         <Route path="finance" element={<OwnerFinance />} />
+                        <Route path="shifts" element={<OwnerShiftManager />} />
                         <Route path="pay-later" element={<OwnerPayLater />} />
                         <Route path="pay-later/:accountId" element={<OwnerPayLater />} />
+                        <Route path="customers" element={<OwnerCustomerManager />} />
+                        <Route path="customers/:customerId" element={<OwnerCustomerDetail />} />
+                        <Route path="discounts" element={<OwnerDiscounts />} />
+                        <Route path="loyalty" element={<OwnerLoyalty />} />
                         <Route path="staff" element={<OwnerStaff />} />
+                        <Route path="staff-schedules" element={<OwnerStaffSchedules />} />
+                        <Route path="staff-attendance" element={<OwnerStaffAttendance />} />
+                        <Route path="staff-tasks" element={<OwnerStaffTasks />} />
                         <Route path="settings" element={<OwnerSettings />} />
+                        <Route
+                            path="audit-logs"
+                            element={
+                                <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER"]}>
+                                    <OwnerAuditLogs />
+                                </ProtectedRoute>
+                            }
+                        />
                         <Route path="notifications" element={<OwnerNotifications />} />
+                        <Route path="supply" element={<OwnerSupplyChainMarketplace />} />
+                        <Route path="supply-chain" element={<OwnerSupplyChainIntelligence />} />
+                        <Route path="supply-chain/marketplace" element={<OwnerSupplyChainMarketplace />} />
+                        <Route path="supply-chain/inventory" element={<OwnerSupplyChainInventory />} />
+                        <Route path="supply-chain/inventory/low-stock" element={<OwnerSupplyChainLowStock />} />
+                        <Route path="supply-chain/inventory/expiry" element={<OwnerSupplyChainExpiry />} />
+                        <Route path="supply-chain/inventory/movements" element={<OwnerSupplyChainMovements />} />
+                        <Route path="supply-chain/inventory/adjustments" element={<OwnerSupplyChainAdjustments />} />
+                        <Route path="supply-chain/inventory/valuation" element={<OwnerSupplyChainValuation />} />
+                        <Route path="supply-chain/suppliers" element={<OwnerSupplyChainSuppliers />} />
+                        <Route path="supply-chain/purchase-requests" element={<OwnerSupplyChainPurchaseRequests />} />
+                        <Route path="supply-chain/purchase-orders" element={<OwnerSupplyChainPurchaseOrders />} />
+                        <Route path="supply-chain/receiving" element={<OwnerSupplyChainReceiving />} />
+                        <Route path="supply-chain/purchase-returns" element={<OwnerSupplyChainPurchaseReturns />} />
+                        <Route path="supply-chain/invoices" element={<OwnerSupplyChainInvoices />} />
+                        <Route path="supply-chain/warehouse" element={<OwnerSupplyChainWarehouse />} />
+                        <Route path="supply-chain/transfers" element={<OwnerSupplyChainTransfers />} />
+                        <Route path="supply-chain/stock-counts" element={<OwnerSupplyChainStockCounts />} />
+                        <Route path="recipes" element={<OwnerSupplyChainRecipes />} />
+                        <Route path="inventory/recipes" element={<OwnerSupplyChainRecipes />} />
+                        <Route path="supply-chain/recipes" element={<OwnerSupplyChainRecipes />} />
+                        <Route path="supply-chain/consumption" element={<OwnerSupplyChainConsumption />} />
+                        <Route path="supply-chain/wastage" element={<OwnerSupplyChainWastage />} />
+                        <Route path="supply-chain/negotiations" element={<OwnerSupplyChainNegotiations />} />
+                        <Route path="supply-chain/payments" element={<OwnerSupplyChainPayments />} />
+                        <Route path="supply-chain/reports" element={<OwnerSupplyChainReports />} />
+                        <Route path="supply-chain/settings" element={<OwnerSupplyChainSettings />} />
+                        <Route path="supply-chain/inventory/:itemId" element={<OwnerSupplyChainInventoryDetail />} />
+                        <Route path="delivery" element={<OwnerDeliveryManager />} />
+                        <Route path="delivery-partners" element={<OwnerDeliveryPartners />} />
+                        <Route path="driver-portal" element={<DriverDeliveryStudio />} />
                     </Route>
+                    <Route
+                        path="/staff/dashboard"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "CHEF", "WAITER", "CASHIER", "STAFF"]}>
+                                <StaffDashboard />
+                            </ProtectedRoute>
+                        }
+                    />
+
+                    {/* ================================= */}
+                    {/* SUPPLIER PORTAL ROUTES */}
+                    {/* ================================= */}
+                    <Route path="/supplier/login" element={<SupplierLogin />} />
+                    <Route path="/supplier/register" element={<SupplierLogin />} />
+                    <Route
+                        path="/supplier"
+                        element={
+                            <SupplierProtectedRoute>
+                                <SupplierDashboard />
+                            </SupplierProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/super-admin/supply"
+                        element={
+                            <ProtectedRoute role="SUPER_ADMIN">
+                                <SuperAdminSupplyChain />
+                            </ProtectedRoute>
+                        }
+                    />
 
 
                     {/* ================================= */}
@@ -479,6 +759,8 @@ export default function App() {
 
                     </Routes>
                 </div>
+                </CustomerNotificationProvider>
+                </TableStateProvider>
             </StaffSocketProvider>
         </AuthProvider>
     );
