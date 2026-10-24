@@ -1,0 +1,885 @@
+import { useEffect, useState } from "react";
+import {
+    Truck,
+    Package,
+    CheckCircle2,
+    XCircle,
+    ShieldAlert,
+    RefreshCw,
+    DollarSign,
+    Layers,
+    Users,
+    Building2,
+    CreditCard,
+    MapPin,
+    Clock,
+    BarChart3,
+    PieChart as PieIcon,
+    Menu,
+    Search,
+    Filter,
+    Tag,
+    SlidersHorizontal,
+    X,
+} from "lucide-react";
+import {
+    Bar,
+    BarChart,
+    CartesianGrid,
+    Cell,
+    Pie,
+    PieChart,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+} from "recharts";
+import { api } from "../../utils/apiClient";
+import { showToast } from "../../utils/toast";
+import { useAuth } from "../../context/AuthContext";
+import { resolveImageUrl } from "../../utils/resolveImageUrl";
+import tiffzyLogo from "../../assets/tiffzy-logo.png";
+import SuperAdminSidebar from "../../components/super-admin/SuperAdminSidebar";
+
+const CHART_COLORS = ["#f5b94e", "#10b981", "#3b82f6", "#ef4444", "#8b5cf6"];
+
+const getSupplyProductImageUrl = (item) => {
+    if (!item) return "";
+    let raw = "";
+
+    // 1. Check explicit primary image or imageUrl or image properties
+    if (typeof item.primaryImage === "string" && item.primaryImage.trim()) raw = item.primaryImage.trim();
+    else if (typeof item.imageUrl === "string" && item.imageUrl.trim()) raw = item.imageUrl.trim();
+    else if (typeof item.image === "string" && item.image.trim()) raw = item.image.trim();
+    else if (typeof item.photoUrl === "string" && item.photoUrl.trim()) raw = item.photoUrl.trim();
+    else if (Array.isArray(item.images) && item.images.length > 0) {
+        const primaryObj = item.images.find((img) => img && (img.isPrimary || img.primary));
+        const first = primaryObj || item.images[0];
+        if (typeof first === "string" && first.trim()) raw = first.trim();
+        else if (first && typeof first.imageUrl === "string" && first.imageUrl.trim()) raw = first.imageUrl.trim();
+        else if (first && typeof first.url === "string" && first.url.trim()) raw = first.url.trim();
+        else if (first && typeof first.src === "string" && first.src.trim()) raw = first.src.trim();
+    }
+
+    // 2. If a valid custom image URL or base64 data URL exists, return it immediately
+    const resolved = resolveImageUrl(raw);
+    if (resolved) return resolved;
+
+    // 3. Fallback matching: Specific product names MUST be checked before broad category fallbacks!
+    const name = String(item.name || "").toLowerCase();
+    const cat = String(item.category?.name || item.categoryName || item.category || "").toLowerCase();
+
+    if (name.includes("tomato")) {
+        return "https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("onion")) {
+        return "https://images.unsplash.com/photo-1618512496248-a07fe83aa8cf?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("mirchi") || name.includes("chili") || name.includes("chilli") || name.includes("pepper")) {
+        return "https://images.unsplash.com/photo-1588252303782-cb80119abd6d?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("pudina") || name.includes("pudin") || name.includes("mint")) {
+        return "https://images.unsplash.com/photo-1628556270448-4d4e4148e1b1?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("besan") || name.includes("gram flour") || name.includes("chickpea flour")) {
+        return "https://images.unsplash.com/photo-1608797178974-15b35a64ede9?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("vinegar")) {
+        return "https://images.unsplash.com/photo-1563227812-0ea4c22e6cc8?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("coke") || name.includes("cola") || name.includes("sprite") || name.includes("pepsi") || name.includes("soda")) {
+        return "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("egg")) {
+        return "https://images.unsplash.com/photo-1516448620398-c5f44bf9f441?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("chicken") || name.includes("checken") || name.includes("poultry") || name.includes("meat")) {
+        return "https://images.unsplash.com/photo-1587593810167-a84920ea0781?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("flour") || name.includes("atta") || name.includes("maida") || name.includes("bread") || name.includes("bun")) {
+        return "https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("oil") || name.includes("ghee")) {
+        return "https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("milk") || name.includes("cheese") || name.includes("paneer") || name.includes("butter")) {
+        return "https://images.unsplash.com/photo-1628088062854-d1870b4553da?auto=format&fit=crop&w=600&q=80";
+    }
+    if (name.includes("rice")) {
+        return "https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=600&q=80";
+    }
+
+    // Secondary broad category fallbacks
+    if (cat.includes("beverage")) {
+        return "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=600&q=80";
+    }
+    if (cat.includes("meat")) {
+        return "https://images.unsplash.com/photo-1587593810167-a84920ea0781?auto=format&fit=crop&w=600&q=80";
+    }
+    if (cat.includes("dairy")) {
+        return "https://images.unsplash.com/photo-1628088062854-d1870b4553da?auto=format&fit=crop&w=600&q=80";
+    }
+    if (cat.includes("spice") || cat.includes("sauce") || cat.includes("condiment")) {
+        return "https://images.unsplash.com/photo-1596040033229-a9821ebd058d?auto=format&fit=crop&w=600&q=80";
+    }
+    if (cat.includes("bakery")) {
+        return "https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80";
+    }
+    if (cat.includes("oil")) {
+        return "https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&w=600&q=80";
+    }
+    if (cat.includes("packaging") || cat.includes("disposable")) {
+        return "https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?auto=format&fit=crop&w=600&q=80";
+    }
+    if (cat.includes("produce") || cat.includes("vegetable") || cat.includes("fruit")) {
+        return "https://images.unsplash.com/photo-1610348725531-843dff563e2c?auto=format&fit=crop&w=600&q=80";
+    }
+
+    return "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80";
+};
+
+
+export default function SuperAdminSupplyChain() {
+    const { user, logout } = useAuth();
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [dashboard, setDashboard] = useState(null);
+    const [suppliers, setSuppliers] = useState([]);
+    const [products, setProducts] = useState([]);
+    const [orders, setOrders] = useState([]);
+    const [categories, setCategories] = useState([]);
+    const [activeTab, setActiveTab] = useState("products");
+
+    // Filter states
+    const [searchQuery, setSearchQuery] = useState("");
+    const [selectedCategory, setSelectedCategory] = useState("ALL");
+    const [selectedStatus, setSelectedStatus] = useState("ALL");
+
+    const loadData = async () => {
+        setLoading(true);
+        try {
+            const [dashRes, suppRes, prodRes, ordRes, catRes] = await Promise.all([
+                api.get("/super-admin/supply/dashboard").catch(() => null),
+                api.get("/super-admin/supply/suppliers").catch(() => null),
+                api.get("/super-admin/supply/products").catch(() => null),
+                api.get("/super-admin/supply/orders").catch(() => null),
+                api.get("/super-admin/supply/categories").catch(() => null),
+            ]);
+
+            if (dashRes?.data) setDashboard(dashRes.data);
+            if (suppRes?.data?.suppliers) setSuppliers(suppRes.data.suppliers);
+            if (prodRes?.data?.products) setProducts(prodRes.data.products);
+            if (ordRes?.data?.orders) setOrders(ordRes.data.orders);
+            if (catRes?.data?.categories) setCategories(catRes.data.categories);
+        } catch (err) {
+            showToast("Failed to load Super Admin supply data", { type: "error" });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    const handleUpdateSupplierStatus = async (supplierId, status) => {
+        try {
+            await api.post(`/super-admin/supply/suppliers/${supplierId}/status`, { status });
+            showToast(`Supplier account status updated to ${status}!`);
+            loadData();
+        } catch (err) {
+            showToast(err?.response?.data?.error || "Failed to update supplier status", { type: "error" });
+        }
+    };
+
+    const handleUpdateProductStatus = async (productId, status) => {
+        try {
+            await api.post(`/super-admin/supply/products/${productId}/status`, { status });
+            showToast(`Product status updated to ${status}`);
+            loadData();
+        } catch (err) {
+            showToast(err?.response?.data?.error || "Failed to update product status", { type: "error" });
+        }
+    };
+
+    const handleProcessSettlement = async (supplierId) => {
+        try {
+            await api.post(`/super-admin/supply/settlements`, { supplierId, commissionPercent: 5.0 });
+            showToast("Supplier payout settlement processed successfully!");
+            loadData();
+        } catch (err) {
+            showToast(err?.response?.data?.error || "Failed to process settlement", { type: "error" });
+        }
+    };
+
+    const pendingSuppliers = suppliers.filter((s) => s.status !== "ACTIVE");
+    const activeSuppliers = suppliers.filter((s) => s.status === "ACTIVE");
+
+    // Extract unique categories from loaded categories or products
+    const availableCategories = categories.length > 0
+        ? categories
+        : Array.from(
+            new Map(
+                products
+                    .map((p) => p.category)
+                    .filter(Boolean)
+                    .map((c) => [c.id || c.name, c])
+            ).values()
+        );
+
+    // FILTERED PRODUCTS
+    const filteredProducts = products.filter((p) => {
+        // Category Filter
+        if (selectedCategory !== "ALL") {
+            const selStr = String(selectedCategory);
+            const catMatch =
+                String(p.categoryId || "") === selStr ||
+                String(p.category?.id || "") === selStr ||
+                String(p.category?.slug || "").toLowerCase() === selStr.toLowerCase() ||
+                String(p.category?.name || "").toLowerCase() === selStr.toLowerCase();
+            if (!catMatch) return false;
+        }
+        // Status Filter
+        if (selectedStatus !== "ALL") {
+            if (p.status !== selectedStatus) return false;
+        }
+        // Search Query
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase();
+            const pName = (p.name || "").toLowerCase();
+            const sName = (p.supplier?.profile?.businessName || "").toLowerCase();
+            const cName = (p.category?.name || "").toLowerCase();
+            const desc = (p.description || "").toLowerCase();
+            return pName.includes(q) || sName.includes(q) || cName.includes(q) || desc.includes(q);
+        }
+        return true;
+    });
+
+    // FILTERED SUPPLIERS
+    const filteredSuppliers = suppliers.filter((s) => {
+        if (selectedStatus !== "ALL" && s.status !== selectedStatus) return false;
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase();
+            const bName = (s.profile?.businessName || "").toLowerCase();
+            const email = (s.email || "").toLowerCase();
+            const phone = (s.phone || "").toLowerCase();
+            const gstin = (s.profile?.gstin || "").toLowerCase();
+            return bName.includes(q) || email.includes(q) || phone.includes(q) || gstin.includes(q);
+        }
+        return true;
+    });
+
+    // FILTERED ORDERS
+    const filteredOrders = orders.filter((o) => {
+        if (selectedStatus !== "ALL" && o.status !== selectedStatus) return false;
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase();
+            const orderNo = (o.orderNo || "").toLowerCase();
+            const sName = (o.supplier?.profile?.businessName || "").toLowerCase();
+            const rName = (o.restaurant?.name || "").toLowerCase();
+            return orderNo.includes(q) || sName.includes(q) || rName.includes(q);
+        }
+        return true;
+    });
+
+    // CHART DATA 1: B2B Revenue / Sales Volume by Supplier
+    const supplierSalesChartData = suppliers.map((s) => {
+        const name = s.profile?.businessName || `Supplier #${s.id}`;
+        const suppOrders = orders.filter((o) => o.supplierId === s.id && o.status !== "CANCELLED");
+        const salesVolume = suppOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+        return {
+            name: name.length > 14 ? `${name.slice(0, 13)}...` : name,
+            fullName: name,
+            salesVolume,
+            commission: Math.round(salesVolume * 0.05),
+        };
+    });
+
+    // CHART DATA 2: B2B Order Status Distribution Split
+    const statusCounts = {
+        PLACED: orders.filter((o) => o.status === "PLACED").length,
+        ACCEPTED: orders.filter((o) => o.status === "ACCEPTED").length,
+        DISPATCHED: orders.filter((o) => o.status === "DISPATCHED").length,
+        DELIVERED: orders.filter((o) => o.status === "DELIVERED" || o.status === "COMPLETED").length,
+        CANCELLED: orders.filter((o) => o.status === "CANCELLED" || o.status === "REJECTED").length,
+    };
+
+    const orderStatusChartData = [
+        { name: "Placed", value: statusCounts.PLACED || 1, color: "#f5b94e" },
+        { name: "Accepted", value: statusCounts.ACCEPTED || 0, color: "#3b82f6" },
+        { name: "Dispatched", value: statusCounts.DISPATCHED || 0, color: "#8b5cf6" },
+        { name: "Completed", value: statusCounts.DELIVERED || 0, color: "#10b981" },
+        { name: "Cancelled", value: statusCounts.CANCELLED || 0, color: "#ef4444" },
+    ].filter((d) => d.value > 0);
+
+    return (
+        <div className="theme-page min-h-screen" id="super-admin-top">
+            <SuperAdminSidebar open={sidebarOpen} setOpen={setSidebarOpen} currentKey="supply" />
+
+            <header className="theme-nav border-b px-2 py-2 md:px-3">
+                <div className="w-full flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-3" id="profile-section">
+                        <button
+                            type="button"
+                            onClick={() => setSidebarOpen(true)}
+                            className="theme-soft-button inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold cursor-pointer"
+                        >
+                            <Menu size={16} />
+                            Tiffzy
+                        </button>
+                        <div className="flex h-12 w-12 -rotate-2 items-center justify-center overflow-hidden rounded-md border border-[#d9c8af] bg-transparent p-0.5 shadow-[0_3px_8px_rgba(88,61,36,0.14)]">
+                            <img src={tiffzyLogo} alt="Tiffzy logo" className="h-full w-full object-contain mix-blend-multiply" />
+                        </div>
+                        <div>
+                            <p className="theme-muted text-xs uppercase tracking-[0.28em]">Super Admin</p>
+                            <h1 className="text-2xl font-bold">Tiffzy</h1>
+                            <p className="theme-muted text-sm">{user?.email || "admin@tiffzy.com"}</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={logout}
+                            className="rounded-full bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/20 cursor-pointer"
+                        >
+                            Logout
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <main className="w-full px-2 py-3 md:px-3">
+                <section className="space-y-6">
+                    {/* Header */}
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-b theme-border pb-5">
+                        <div>
+                            <h2 className="text-2xl font-extrabold tracking-tight flex items-center gap-2">
+                                <Truck className="theme-accent-text" />
+                                Super Admin — Supply Chain Management
+                            </h2>
+                            <p className="theme-muted text-xs mt-0.5">Supplier KYC verification approval, catalog moderation, B2B orders & settlements</p>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={loadData}
+                            className="theme-soft-button rounded-xl px-4 py-2 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-sm"
+                        >
+                            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                            Refresh Stats
+                        </button>
+                    </div>
+
+                    {/* Compact Metric Summary Row */}
+                    <div className="max-w-3xl grid grid-cols-2 sm:grid-cols-4 gap-6 py-2 border-b theme-border pb-5">
+                        <div>
+                            <p className="theme-muted text-[11px] font-bold uppercase tracking-wider">Pending KYC</p>
+                            <p className="text-2xl font-black theme-accent-text">{pendingSuppliers.length}</p>
+                            <p className="theme-muted text-[11px]">Requires Review</p>
+                        </div>
+
+                        <div>
+                            <p className="theme-muted text-[11px] font-bold uppercase tracking-wider">Active Suppliers</p>
+                            <p className="text-2xl font-black text-emerald-500">{activeSuppliers.length}</p>
+                            <p className="theme-muted text-[11px]">{suppliers.length} Total Registered</p>
+                        </div>
+
+                        <div>
+                            <p className="theme-muted text-[11px] font-bold uppercase tracking-wider">Gross B2B GMV</p>
+                            <p className="text-2xl font-black theme-accent-text">₹{(dashboard?.orders?.totalVolume || 0).toLocaleString()}</p>
+                            <p className="theme-muted text-[11px]">{dashboard?.orders?.totalCount || 0} Orders Placed</p>
+                        </div>
+
+                        <div>
+                            <p className="theme-muted text-[11px] font-bold uppercase tracking-wider">Net Revenue</p>
+                            <p className="text-2xl font-black text-emerald-500">₹{(dashboard?.settlements?.netRevenue || 0).toLocaleString()}</p>
+                            <p className="theme-muted text-[11px]">5% Platform Fee</p>
+                        </div>
+                    </div>
+
+                    {/* ANALYTICS GRAPHS SECTION */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* GRAPH 1: B2B Sales GMV Volume by Supplier */}
+                        <div className="theme-panel rounded-3xl p-6 border shadow-sm space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="font-bold text-base flex items-center gap-2">
+                                        <BarChart3 className="theme-accent-text" size={18} />
+                                        B2B Sales GMV Volume by Supplier
+                                    </h3>
+                                    <p className="theme-muted text-xs">Gross raw ingredient procurement volume in ₹</p>
+                                </div>
+                            </div>
+
+                            <div className="h-64 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={supplierSalesChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                        <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                                        <XAxis dataKey="name" tick={{ fontSize: 11, fill: "currentColor" }} />
+                                        <YAxis tick={{ fontSize: 11, fill: "currentColor" }} />
+                                        <Tooltip
+                                            contentStyle={{ background: "#151722", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "12px", color: "#fff" }}
+                                            formatter={(val) => [`₹${val.toLocaleString()}`, "GMV Volume"]}
+                                        />
+                                        <Bar dataKey="salesVolume" radius={[8, 8, 0, 0]}>
+                                            {supplierSalesChartData.map((_, index) => (
+                                                <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                                            ))}
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* GRAPH 2: B2B Order Status Distribution */}
+                        <div className="theme-panel rounded-3xl p-6 border shadow-sm space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="font-bold text-base flex items-center gap-2">
+                                        <PieIcon className="theme-accent-text" size={18} />
+                                        B2B Supply Order Status Share
+                                    </h3>
+                                    <p className="theme-muted text-xs">Distribution of placed, accepted, completed & cancelled orders</p>
+                                </div>
+                            </div>
+
+                            <div className="h-64 w-full flex items-center justify-center">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={orderStatusChartData}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={55}
+                                            outerRadius={85}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                        >
+                                            {orderStatusChartData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip
+                                            contentStyle={{ background: "#151722", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "12px", color: "#fff" }}
+                                        />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* FILTER & CATEGORY SELECTOR TOOLBAR */}
+                    <div className="theme-panel rounded-3xl p-5 border shadow-sm space-y-4">
+                        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+                            {/* Search Input */}
+                            <div className="relative flex-1">
+                                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 theme-muted" size={18} />
+                                <input
+                                    type="text"
+                                    placeholder="Search products, suppliers, categories, orders..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full theme-input rounded-2xl pl-10 pr-10 py-2.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#f5b94e]"
+                                />
+                                {searchQuery && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSearchQuery("")}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 theme-muted hover:text-white cursor-pointer"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3">
+                                {/* Category Selector Dropdown */}
+                                <div className="flex items-center gap-2">
+                                    <Tag size={16} className="theme-accent-text" />
+                                    <select
+                                        value={selectedCategory}
+                                        onChange={(e) => setSelectedCategory(e.target.value)}
+                                        className="rounded-2xl border border-[var(--app-border,rgba(0,0,0,0.15))] bg-white dark:bg-slate-900 text-gray-900 dark:text-white px-4 py-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-[#f5b94e] cursor-pointer shadow-sm"
+                                    >
+                                        <option value="ALL" className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold">
+                                            📦 All Categories ({products.length})
+                                        </option>
+                                        {availableCategories.map((c) => {
+                                            const catVal = String(c.id || c.slug || c.name);
+                                            const catProdCount = products.filter((p) => {
+                                                const selStr = String(catVal);
+                                                return (
+                                                    String(p.categoryId || "") === selStr ||
+                                                    String(p.category?.id || "") === selStr ||
+                                                    String(p.category?.slug || "").toLowerCase() === selStr.toLowerCase() ||
+                                                    String(p.category?.name || "").toLowerCase() === String(c.name || "").toLowerCase()
+                                                );
+                                            }).length;
+                                            return (
+                                                <option key={catVal} value={catVal} className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">
+                                                    {c.name} ({catProdCount})
+                                                </option>
+                                            );
+                                        })}
+                                    </select>
+                                </div>
+
+                                {/* Status Filter Dropdown */}
+                                <div className="flex items-center gap-2">
+                                    <Filter size={16} className="theme-muted" />
+                                    <select
+                                        value={selectedStatus}
+                                        onChange={(e) => setSelectedStatus(e.target.value)}
+                                        className="rounded-2xl border border-[var(--app-border,rgba(0,0,0,0.15))] bg-white dark:bg-slate-900 text-gray-900 dark:text-white px-4 py-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-[#f5b94e] cursor-pointer shadow-sm"
+                                    >
+                                        <option value="ALL" className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white font-bold">All Statuses</option>
+                                        <option value="ACTIVE" className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">Active / Approved</option>
+                                        <option value="PENDING" className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">Pending Review</option>
+                                        <option value="REJECTED" className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">Rejected</option>
+                                        <option value="SUSPENDED" className="bg-white dark:bg-slate-900 text-gray-900 dark:text-white">Suspended</option>
+                                    </select>
+                                </div>
+
+                                {/* Reset Filters Button */}
+                                {(searchQuery || selectedCategory !== "ALL" || selectedStatus !== "ALL") && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSearchQuery("");
+                                            setSelectedCategory("ALL");
+                                            setSelectedStatus("ALL");
+                                        }}
+                                        className="rounded-2xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 px-3.5 py-2.5 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                                    >
+                                        <X size={14} /> Clear Filters
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* CATEGORY SELECTOR PILLS BAR */}
+                        {availableCategories.length > 0 && (
+                            <div className="pt-2 border-t theme-border">
+                                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                                    <span className="text-[11px] font-extrabold theme-muted uppercase tracking-wider whitespace-nowrap mr-1 flex items-center gap-1">
+                                        <SlidersHorizontal size={13} /> Select Category:
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedCategory("ALL")}
+                                        className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition cursor-pointer ${
+                                            selectedCategory === "ALL"
+                                                ? "theme-button shadow-sm"
+                                                : "theme-soft-button hover:bg-white/10"
+                                        }`}
+                                    >
+                                        All ({products.length})
+                                    </button>
+                                    {availableCategories.map((cat) => {
+                                        const catVal = String(cat.id || cat.slug || cat.name);
+                                        const isSelected = String(selectedCategory) === catVal;
+                                        const catCount = products.filter((p) => {
+                                            return (
+                                                String(p.categoryId || "") === catVal ||
+                                                String(p.category?.id || "") === catVal ||
+                                                String(p.category?.slug || "").toLowerCase() === catVal.toLowerCase() ||
+                                                String(p.category?.name || "").toLowerCase() === String(cat.name || "").toLowerCase()
+                                            );
+                                        }).length;
+                                        return (
+                                            <button
+                                                key={catVal}
+                                                type="button"
+                                                onClick={() => setSelectedCategory(catVal)}
+                                                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                                                    isSelected
+                                                        ? "theme-button shadow-sm"
+                                                        : "theme-soft-button hover:bg-white/10"
+                                                }`}
+                                            >
+                                                <span>{cat.name}</span>
+                                                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? "bg-black/30 text-white font-extrabold" : "theme-chip"}`}>
+                                                    {catCount}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Tab Navigation Controls */}
+                    <div className="flex border-b theme-border gap-2 pt-2">
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab("products")}
+                            className={`px-5 py-2.5 text-xs font-extrabold rounded-t-xl transition cursor-pointer ${
+                                activeTab === "products" ? "theme-button shadow-md" : "theme-soft-button"
+                            }`}
+                        >
+                            Product Moderation ({filteredProducts.length})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab("suppliers")}
+                            className={`px-5 py-2.5 text-xs font-extrabold rounded-t-xl transition cursor-pointer ${
+                                activeTab === "suppliers" ? "theme-button shadow-md" : "theme-soft-button"
+                            }`}
+                        >
+                            Supplier Accounts ({filteredSuppliers.length})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab("orders")}
+                            className={`px-5 py-2.5 text-xs font-extrabold rounded-t-xl transition cursor-pointer ${
+                                activeTab === "orders" ? "theme-button shadow-md" : "theme-soft-button"
+                            }`}
+                        >
+                            Marketplace Orders ({filteredOrders.length})
+                        </button>
+                    </div>
+
+                    {/* Tab 1: Product Moderation */}
+                    {activeTab === "products" && (
+                        <div className="space-y-4">
+                            {filteredProducts.length === 0 ? (
+                                <div className="theme-panel rounded-3xl p-10 text-center border space-y-2">
+                                    <Package size={40} className="mx-auto theme-muted opacity-40" />
+                                    <h4 className="text-base font-bold">No Products Found</h4>
+                                    <p className="theme-muted text-xs">No products match your selected category or filter criteria.</p>
+                                    {(searchQuery || selectedCategory !== "ALL" || selectedStatus !== "ALL") && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setSearchQuery("");
+                                                setSelectedCategory("ALL");
+                                                setSelectedStatus("ALL");
+                                            }}
+                                            className="theme-button rounded-xl px-4 py-2 text-xs font-bold mt-2 cursor-pointer inline-flex items-center gap-1.5"
+                                        >
+                                            Reset All Filters
+                                        </button>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {filteredProducts.map((p) => {
+                                        const prodImg = getSupplyProductImageUrl(p);
+                                        return (
+                                            <div key={p.id} className="theme-panel rounded-2xl p-4 space-y-3 border shadow-sm hover:border-[#f5b94e]/40 transition flex flex-col justify-between">
+                                                <div className="space-y-3">
+                                                    {/* Product Image Banner */}
+                                                    <div className="relative h-40 w-full overflow-hidden rounded-xl bg-gray-100 dark:bg-slate-800 border border-[var(--app-border,rgba(0,0,0,0.08))]">
+                                                        <img
+                                                            src={prodImg}
+                                                            alt={p.name}
+                                                            className="h-full w-full object-cover transition-transform duration-300 hover:scale-105"
+                                                            onError={(e) => {
+                                                                e.target.onerror = null;
+                                                                e.target.src = "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80";
+                                                            }}
+                                                        />
+                                                        <span className="absolute top-2 left-2 backdrop-blur-md bg-black/60 text-white rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider border border-white/20">
+                                                            {p.category?.name || "General Raw Ingredient"}
+                                                        </span>
+                                                        <span className={`absolute top-2 right-2 rounded-full px-2.5 py-0.5 text-[10px] font-extrabold shadow-sm ${
+                                                            p.status === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-amber-500 text-white"
+                                                        }`}>
+                                                            {p.status}
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Product Meta */}
+                                                    <div>
+                                                        <h3 className="font-extrabold text-base leading-snug">{p.name}</h3>
+                                                        <p className="theme-muted text-xs mt-0.5">
+                                                            Supplier: <strong className="font-semibold text-amber-600 dark:text-amber-400">{p.supplier?.profile?.businessName || "SocialSea"}</strong>
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="text-xs space-y-1 theme-muted border-t theme-border pt-3">
+                                                        <p>Base Price: <span className="font-black text-gray-900 dark:text-white text-sm">₹{p.prices?.[0]?.basePrice || p.basePrice || 100}</span> / {p.unit}</p>
+                                                        <p>MOQ: <span className="font-bold text-gray-900 dark:text-white">{p.moq} {p.unit}</span> • Stock: <span className="font-bold text-emerald-500">{p.inventory?.availableQuantity ?? 500} {p.unit}</span></p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Approve / Reject Actions */}
+                                                <div className="flex items-center gap-2 pt-2 border-t theme-border">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleUpdateProductStatus(p.id, "ACTIVE")}
+                                                        className="flex-1 theme-button py-2 text-xs font-extrabold cursor-pointer transition shadow-sm rounded-xl"
+                                                    >
+                                                        Approve
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleUpdateProductStatus(p.id, "REJECTED")}
+                                                        className="flex-1 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 py-2 text-xs font-bold cursor-pointer transition"
+                                                    >
+                                                        Reject
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+
+                    {/* Tab 2: Supplier Verification & KYC Review */}
+                    {activeTab === "suppliers" && (
+                        <div className="space-y-6">
+                            {/* PENDING KYC VERIFICATION APPLICATIONS */}
+                            {pendingSuppliers.length > 0 && (
+                                <div className="space-y-3">
+                                    <h3 className="text-lg font-extrabold theme-accent-text flex items-center gap-2">
+                                        <Clock size={20} />
+                                        Pending Supplier KYC Verification Requests ({pendingSuppliers.length})
+                                    </h3>
+
+                                    <div className="space-y-4">
+                                        {pendingSuppliers.map((s) => {
+                                            const prof = s.profile || {};
+                                            const addr = s.addresses?.[0] || {};
+                                            return (
+                                                <div key={s.id} className="theme-panel rounded-3xl p-6 space-y-4 shadow-md border">
+                                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b theme-border pb-4">
+                                                        <div>
+                                                            <div className="flex items-center gap-3">
+                                                                <h4 className="text-xl font-bold">{prof.businessName || `Supplier #${s.id}`}</h4>
+                                                                <span className="theme-chip rounded-full px-3 py-1 text-xs font-extrabold">
+                                                                    {s.status || "PENDING"}
+                                                                </span>
+                                                            </div>
+                                                            <p className="theme-muted text-xs mt-1">Email: {s.email} • Phone: {s.phone}</p>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleUpdateSupplierStatus(s.id, "ACTIVE")}
+                                                                className="theme-button rounded-xl px-5 py-2.5 text-xs font-black transition cursor-pointer shadow-md flex items-center gap-1.5"
+                                                            >
+                                                                <CheckCircle2 size={16} />
+                                                                Approve & Activate Account
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleUpdateSupplierStatus(s.id, "REJECTED")}
+                                                                className="rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold px-4 py-2.5 text-xs transition cursor-pointer"
+                                                            >
+                                                                Reject KYC
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* SUBMITTED KYC DETAILS GRID */}
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                                                        <div className="theme-card rounded-2xl p-4 border space-y-1.5">
+                                                            <p className="theme-muted text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
+                                                                <Building2 size={14} /> Tax & Compliance
+                                                            </p>
+                                                            <p><span className="theme-muted">Legal Name:</span> <strong className="font-bold">{prof.legalName || "N/A"}</strong></p>
+                                                            <p><span className="theme-muted">GSTIN:</span> <strong className="theme-accent-text font-extrabold">{prof.gstin || "N/A"}</strong></p>
+                                                            <p><span className="theme-muted">FSSAI License:</span> <strong className="font-bold">{prof.fssaiLicense || "N/A"}</strong></p>
+                                                        </div>
+
+                                                        <div className="theme-card rounded-2xl p-4 border space-y-1.5">
+                                                            <p className="theme-muted text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
+                                                                <CreditCard size={14} /> Bank Payout Account
+                                                            </p>
+                                                            <p><span className="theme-muted">Account No:</span> <strong className="font-bold">{prof.bankAccountNumber || "N/A"}</strong></p>
+                                                            <p><span className="theme-muted">IFSC Code:</span> <strong className="font-bold">{prof.bankIfscCode || "N/A"}</strong></p>
+                                                            <p><span className="theme-muted">Holder / Bank:</span> <strong className="font-bold">{prof.bankAccountName || "N/A"} ({prof.bankName || "Bank"})</strong></p>
+                                                        </div>
+
+                                                        <div className="theme-card rounded-2xl p-4 border space-y-1.5">
+                                                            <p className="theme-muted text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
+                                                                <MapPin size={14} /> Warehouse Facility
+                                                            </p>
+                                                            <p><strong className="font-bold">{addr.line1 || "No address line"}</strong></p>
+                                                            <p className="theme-muted">{addr.city || "City"}, {addr.state || "State"} - {addr.pincode || "Pincode"}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ACTIVE SUPPLIERS */}
+                            <div className="space-y-3">
+                                <h3 className="text-lg font-bold">Active Approved Suppliers ({filteredSuppliers.filter(s => s.status === "ACTIVE").length})</h3>
+                                {filteredSuppliers.filter(s => s.status === "ACTIVE").length === 0 ? (
+                                    <p className="theme-muted text-sm py-4">No active suppliers matching filters.</p>
+                                ) : (
+                                    filteredSuppliers.filter(s => s.status === "ACTIVE").map((s) => (
+                                        <div key={s.id} className="theme-panel rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 border shadow-sm">
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <h4 className="font-bold text-base">{s.profile?.businessName || `Supplier #${s.id}`}</h4>
+                                                    <span className="rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-0.5 text-xs font-bold">
+                                                        ACTIVE
+                                                    </span>
+                                                </div>
+                                                <p className="theme-muted text-xs">Email: {s.email} • Phone: {s.phone}</p>
+                                                <p className="theme-muted text-xs mt-0.5">GSTIN: {s.profile?.gstin || "N/A"} • FSSAI: {s.profile?.fssaiLicense || "N/A"}</p>
+                                            </div>
+
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleUpdateSupplierStatus(s.id, "SUSPENDED")}
+                                                    className="rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 px-4 py-2 text-xs font-bold transition cursor-pointer"
+                                                >
+                                                    Suspend
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleProcessSettlement(s.id)}
+                                                    className="theme-soft-button rounded-xl font-bold px-4 py-2 text-xs transition cursor-pointer"
+                                                >
+                                                    Process Payout
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Tab 3: Marketplace Orders Audit */}
+                    {activeTab === "orders" && (
+                        <div className="space-y-3">
+                            {filteredOrders.length === 0 ? (
+                                <div className="theme-panel rounded-3xl p-8 text-center border">
+                                    <p className="theme-muted text-sm">No marketplace orders match the current filter selection.</p>
+                                </div>
+                            ) : (
+                                filteredOrders.map((o) => (
+                                    <div key={o.id} className="theme-panel rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 border shadow-sm">
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="font-extrabold theme-accent-text">{o.orderNo}</span>
+                                                <span className="theme-chip rounded-full px-3 py-0.5 text-xs font-bold">{o.status}</span>
+                                            </div>
+                                            <p className="theme-muted text-xs">Supplier: {o.supplier?.profile?.businessName || "Unknown"} • Restaurant: {o.restaurant?.name || "Tiffzy Cafe"}</p>
+                                            <p className="text-sm font-extrabold mt-1">Order Amount: ₹{o.totalAmount}</p>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </section>
+            </main>
+        </div>
+    );
+}

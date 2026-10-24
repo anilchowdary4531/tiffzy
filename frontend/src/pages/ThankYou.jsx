@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, CheckCircle2, ClipboardList, Clock, HelpCircle, RefreshCw, RotateCcw, XCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, ClipboardList, Clock, HelpCircle, Navigation, RefreshCw, RotateCcw, XCircle } from "lucide-react";
 import { useRestaurantContext } from "../context/RestaurantContext";
 import OrderTrackingTimeline from "../components/OrderTrackingTimeline";
 import { buildRestaurantMenuPath } from "../utils/restaurantMenuNavigation";
@@ -73,12 +73,12 @@ export default function ThankYou({ orderFromStatus = null, onRefreshStatus = nul
     }, [setRestaurantContext, slug]);
 
     useEffect(() => {
-        if (!slug || !isSuccess) return;
+        if (!isSuccess) return;
         const id = window.setTimeout(() => {
-            navigate(buildRestaurantMenuPath(slug, restaurantContext?.tableNo), { replace: true });
+            navigate("/", { replace: true });
         }, 60_000);
         return () => window.clearTimeout(id);
-    }, [isSuccess, navigate, restaurantContext?.tableNo, slug]);
+    }, [isSuccess, navigate]);
 
     return (
         <div className="theme-page min-h-screen px-4 py-14">
@@ -116,7 +116,7 @@ export default function ThankYou({ orderFromStatus = null, onRefreshStatus = nul
 
                     {/* Subtitle Description */}
                     <p className="theme-muted mt-3 text-base max-w-xl mx-auto leading-relaxed">
-                        {isSuccess && `Thanks for ordering. ${slug ? "Returning to the menu in 60s." : "You can continue ordering anytime."}`}
+                        {isSuccess && "Thanks for ordering. You can continue ordering anytime."}
                         {isFailed && "Your payment could not be completed. If any amount was deducted, it will be refunded within 3-5 business days."}
                         {isCancelled && "You cancelled the payment checkout session. You can try again whenever you are ready."}
                         {isPending && "Your payment is still being processed by Cashfree. Please wait for gateway confirmation."}
@@ -187,6 +187,16 @@ export default function ThankYou({ orderFromStatus = null, onRefreshStatus = nul
 
                     {/* Action Buttons */}
                     <div className="mt-8 grid gap-3 sm:grid-cols-2">
+                        {orderId && (isDeliveryOrder || isSuccess) && (
+                            <Link
+                                to={`/orders/${orderId}/track`}
+                                className="sm:col-span-2 inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black px-6 py-3.5 font-extrabold text-sm shadow-lg transition"
+                            >
+                                <Navigation size={18} />
+                                Track Delivery Live 📍
+                            </Link>
+                        )}
+
                         {onRefreshStatus && (isPending || isUnknown) ? (
                             <button
                                 type="button"
@@ -196,13 +206,21 @@ export default function ThankYou({ orderFromStatus = null, onRefreshStatus = nul
                                 <RefreshCw size={18} />
                                 Refresh Status
                             </button>
+                        ) : isSuccess ? (
+                            <Link
+                                to="/"
+                                className="theme-button inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 font-semibold"
+                            >
+                                <RotateCcw size={18} />
+                                Continue Ordering
+                            </Link>
                         ) : slug ? (
                             <Link
                                 to={buildRestaurantMenuPath(slug, restaurantContext?.tableNo)}
                                 className="theme-button inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 font-semibold"
                             >
                                 <RotateCcw size={18} />
-                                {isSuccess ? "Continue Ordering" : "Try Payment Again"}
+                                Try Payment Again
                             </Link>
                         ) : (
                             <Link
@@ -210,7 +228,7 @@ export default function ThankYou({ orderFromStatus = null, onRefreshStatus = nul
                                 className="theme-button inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 font-semibold"
                             >
                                 <RotateCcw size={18} />
-                                {isSuccess ? "Choose Restaurant" : "Back To Restaurants"}
+                                Back To Restaurants
                             </Link>
                         )}
 

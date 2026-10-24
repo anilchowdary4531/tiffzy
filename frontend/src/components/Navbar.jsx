@@ -1,8 +1,8 @@
 import { Link, useLocation } from "react-router-dom";
 import { ChevronLeft, ChefHat, ShoppingCart, UserCircle2, UtensilsCrossed, LayoutGrid } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
 import ThemeSelector from "./ThemeSelector";
-import LanguageSelector from "./LanguageSelector";
 import RestaurantSelector from "./RestaurantSelector";
 import { useRestaurantContext } from "../context/RestaurantContext";
 import BrandLogo from "./BrandLogo";
@@ -13,6 +13,7 @@ export default function Navbar() {
     const location = useLocation();
     const { user, customer, staffToken, logout } = useAuth();
     const { restaurantContext } = useRestaurantContext();
+    const { cart } = useCart();
     const isCustomerProfileScope = new URLSearchParams(location.search).get("scope") === "customer";
     const hasStaffSession = Boolean(user && staffToken);
     const isStaff = hasStaffSession && !isCustomerProfileScope;
@@ -21,6 +22,8 @@ export default function Navbar() {
     const isProfilePage =
         String(location.pathname || "").startsWith("/profile") ||
         String(location.pathname || "").startsWith("/staff/profile");
+    const isCustomerProfilePage = !isStaff && isProfilePage;
+    const cartCount = Array.isArray(cart) ? cart.reduce((sum, item) => sum + (Number(item?.quantity) || 1), 0) : 0;
 
     const loginPath = (() => {
         const path = String(location.pathname || "");
@@ -80,6 +83,10 @@ export default function Navbar() {
         return links.filter((l) => l.allow);
     })();
 
+    if (isCustomerProfilePage) {
+        return null;
+    }
+
     return (
         <div className="theme-nav flex w-full flex-col gap-4 border-b px-4 py-4 md:flex-row md:items-center md:justify-between md:px-8">
             {!isProfilePage && (
@@ -105,7 +112,6 @@ export default function Navbar() {
             <div className="flex w-full flex-wrap items-center justify-between gap-2 md:w-auto md:justify-end md:gap-4">
                 {!isStaff && !isProfilePage && <RestaurantSelector variant="compact" />}
                 {isStaff && <ThemeSelector />}
-                <LanguageSelector />
 
                 {staffLinks.map((link) => (
                     <Link

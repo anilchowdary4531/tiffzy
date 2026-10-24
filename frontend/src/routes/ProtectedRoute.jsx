@@ -1,28 +1,43 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { resolveEffectiveStaffRole } from "../utils/staffRole";
+import { getActiveStaffSession } from "../utils/staffSessionStorage";
 
 export default function ProtectedRoute({ children, role, roles }) {
     const { user, staffToken } = useAuth();
     const location = useLocation();
-    const hasStaffSession = Boolean(user && staffToken);
+
+    const activeStaffSession = getActiveStaffSession();
+    const token = staffToken || activeStaffSession?.token || localStorage.getItem("supplierToken") || null;
+    const storedUser = user || activeStaffSession?.user || (() => {
+        try {
+            return JSON.parse(localStorage.getItem("supplier")) || null;
+        } catch {
+            return null;
+        }
+    })();
+
+    const activeUser = storedUser || (token ? { role: "OWNER", access: { supply: true } } : null);
+    const hasSession = Boolean(token);
 
     // Not logged in
-    if (!hasStaffSession) return <Navigate to="/login?mode=staff" replace state={{ from: location }} />;
+    if (!hasSession) return <Navigate to="/login?mode=staff" replace state={{ from: location }} />;
 
-    // Role check
-    const normalizedUserRole = resolveEffectiveStaffRole(user?.role, user?.designation);
-    const required = Array.isArray(roles) ? roles : role ? [role] : [];
-    const normalizedRequiredRoles = required
-        .map((r) => String(r || "").toUpperCase())
-        .filter(Boolean);
+    // Role-based authorization check
+    const allowedRoles = Array.isArray(roles)
+        ? roles.map((r) => String(r).toUpperCase())
+        : role
+        ? [String(role).toUpperCase()]
+        : null;
 
-    if (
-        normalizedRequiredRoles.length > 0 &&
-        !normalizedRequiredRoles.includes(normalizedUserRole) &&
-        !(normalizedRequiredRoles.includes("ADMIN") && normalizedUserRole === "SUPER_ADMIN")
-    ) {
-        return <Navigate to="/" replace />;
+    if (allowedRoles && allowedRoles.length > 0) {
+        const userRole = resolveEffectiveStaffRole(activeUser?.role, activeUser?.designation);
+        const isAllowed = allowedRoles.some(
+            (r) => r === userRole || (r === "WAITER" && userRole === "SERVER") || (r === "SERVER" && userRole === "WAITER")
+        );
+        if (!isAllowed) {
+            return <Navigate to="/" replace state={{ from: location }} />;
+        }
     }
 
     return children;

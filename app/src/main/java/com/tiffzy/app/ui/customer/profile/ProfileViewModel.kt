@@ -224,6 +224,11 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     fun logout(onLoggedOut: () -> Unit) {
         viewModelScope.launch {
             try {
+                com.tiffzy.app.service.SocketManager.disconnectOnLogout()
+            } catch (e: Exception) {
+                // Ignore
+            }
+            try {
                 favoritesDataStore.clearFavorites()
             } catch (e: Exception) {
                 // Ignore cleanup error

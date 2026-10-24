@@ -26,6 +26,10 @@ export default function CartDrawer({ open, setOpen }) {
         }
 
         setOpen(false);
+        const isQrFlow = Boolean(
+            location.pathname?.startsWith("/m/") ||
+            location.pathname?.startsWith("/order/table/")
+        );
         navigate("/login?mode=customer", {
             state: {
                 from: {
@@ -33,6 +37,7 @@ export default function CartDrawer({ open, setOpen }) {
                     search: location.search,
                     hash: location.hash,
                 },
+                isQrFlow,
             },
         });
     };
@@ -54,7 +59,14 @@ export default function CartDrawer({ open, setOpen }) {
 
                         {/* HEADER */}
                         <div className="mb-4 flex items-center justify-between">
-                            <h2 className="text-xl font-bold">Your Cart</h2>
+                            <div>
+                                <h2 className="text-xl font-bold">Your Cart</h2>
+                                {restaurantContext?.tableNo && (
+                                    <p className="text-xs font-black text-orange-500 mt-0.5">
+                                        Table {restaurantContext.tableNo} • Dine-In
+                                    </p>
+                                )}
+                            </div>
                             <button onClick={() => setOpen(false)} className="theme-soft-button rounded-full p-2">
                                 ✕
                             </button>

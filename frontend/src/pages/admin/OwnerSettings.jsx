@@ -13,11 +13,14 @@ import {
     Trash2,
     Upload,
     UserCircle2,
+    Plus,
 } from "lucide-react";
 import { API } from "../../config";
 import ThemeSelector from "../../components/ThemeSelector";
 import { resolveImageUrl } from "../../utils/resolveImageUrl";
 import { uploadToS3Presigned } from "../../utils/s3Upload";
+import MapLocationPicker from "../../components/MapLocationPicker";
+import OwnerMenuButton from "../../components/OwnerMenuButton";
 
 const emptyForm = {
     name: "",
@@ -30,6 +33,8 @@ const emptyForm = {
     state: "",
     country: "India",
     pincode: "",
+    latitude: null,
+    longitude: null,
     gstNumber: "",
     logo: "",
     timezone: "Asia/Kolkata",
@@ -42,13 +47,19 @@ const emptyForm = {
     invoicePrefix: "",
     nextInvoiceNumber: 1001,
     isActive: true,
+    billingConfig: {
+        taxes: [],
+        charges: [],
+        roundOff: false,
+        allowTips: true,
+    },
 };
 
-const sectionClass =
-    "theme-panel overflow-hidden rounded-[28px] border border-white/10 bg-black/10 p-5 sm:p-6";
+const sectionClass = "space-y-2 pb-2.5 border-b border-orange-200/60";
 const fieldLabelClass =
-    "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.16em] theme-muted";
-const inputClass = "theme-input w-full rounded-xl px-3.5 py-2.5 text-sm outline-none";
+    "mb-0.5 block text-[10px] font-extrabold uppercase tracking-wider text-stone-500";
+const inputClass =
+    "w-full bg-transparent border-b border-stone-300 py-0.5 text-xs sm:text-sm font-bold text-stone-900 placeholder:text-stone-400 outline-none focus:border-stone-800 transition";
 
 const buildLogoPreviewSources = (rawLogo) => {
     const value = String(rawLogo || "").trim();
@@ -83,21 +94,21 @@ function SectionHeader({ icon, title, subtitle, logoSrc = "" }) {
     const Icon = icon;
 
     return (
-        <div className="flex items-start gap-3">
-            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-black/15">
+        <div className="flex items-center gap-2">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-orange-100/70 text-orange-600">
                 {logoSrc ? (
                     <img
                         src={logoSrc}
                         alt="Restaurant logo"
-                        className="h-full w-full rounded-2xl object-cover"
+                        className="h-full w-full rounded-lg object-cover"
                     />
                 ) : (
-                    <Icon size={18} className="theme-accent-text" />
+                    <Icon size={15} />
                 )}
             </span>
             <div>
-                <h3 className="text-lg font-semibold leading-tight sm:text-xl">{title}</h3>
-                <p className="theme-muted mt-1 text-xs sm:text-sm">{subtitle}</p>
+                <h3 className="text-sm sm:text-base font-bold leading-tight text-stone-900">{title}</h3>
+                <p className="text-[10px] text-stone-500">{subtitle}</p>
             </div>
         </div>
     );
@@ -108,7 +119,7 @@ function Field({ label, hint, className = "", children }) {
         <label className={`block ${className}`}>
             <span className={fieldLabelClass}>{label}</span>
             {children}
-            {hint ? <span className="theme-muted mt-1 block text-xs">{hint}</span> : null}
+            {hint ? <span className="mt-0.5 block text-[9px] text-stone-400">{hint}</span> : null}
         </label>
     );
 }
@@ -194,6 +205,107 @@ export default function OwnerSettings() {
         }
     };
 
+    const handleAddTax = () => {
+        setForm((prev) => {
+            const currentTaxes = Array.isArray(prev.billingConfig?.taxes) ? prev.billingConfig.taxes : [];
+            return {
+                ...prev,
+                billingConfig: {
+                    ...prev.billingConfig,
+                    taxes: [
+                        ...currentTaxes,
+                        {
+                            name: `Tax ${currentTaxes.length + 1}`,
+                            rate: 2.5,
+                            type: "PERCENTAGE",
+                            isInclusive: false,
+                            isEnabled: true,
+                            appliesTo: ["ALL"],
+                        },
+                    ],
+                },
+            };
+        });
+    };
+
+    const handleUpdateTax = (index, field, value) => {
+        setForm((prev) => {
+            const currentTaxes = [...(prev.billingConfig?.taxes || [])];
+            currentTaxes[index] = { ...currentTaxes[index], [field]: value };
+            return {
+                ...prev,
+                billingConfig: { ...prev.billingConfig, taxes: currentTaxes },
+            };
+        });
+    };
+
+    const handleRemoveTax = (index) => {
+        setForm((prev) => {
+            const currentTaxes = [...(prev.billingConfig?.taxes || [])];
+            currentTaxes.splice(index, 1);
+            return {
+                ...prev,
+                billingConfig: { ...prev.billingConfig, taxes: currentTaxes },
+            };
+        });
+    };
+
+    const handleAddCharge = () => {
+        setForm((prev) => {
+            const currentCharges = Array.isArray(prev.billingConfig?.charges) ? prev.billingConfig.charges : [];
+            return {
+                ...prev,
+                billingConfig: {
+                    ...prev.billingConfig,
+                    charges: [
+                        ...currentCharges,
+                        {
+                            name: "Packaging Charge",
+                            amount: 10,
+                            type: "FIXED",
+                            isEnabled: true,
+                            appliesTo: ["ALL"],
+                            isTaxable: false,
+                        },
+                    ],
+                },
+            };
+        });
+    };
+
+    const handleUpdateCharge = (index, field, value) => {
+        setForm((prev) => {
+            const currentCharges = [...(prev.billingConfig?.charges || [])];
+            currentCharges[index] = { ...currentCharges[index], [field]: value };
+            return {
+                ...prev,
+                billingConfig: { ...prev.billingConfig, charges: currentCharges },
+            };
+        });
+    };
+
+    const handleRemoveCharge = (index) => {
+        setForm((prev) => {
+            const currentCharges = [...(prev.billingConfig?.charges || [])];
+            currentCharges.splice(index, 1);
+            return {
+                ...prev,
+                billingConfig: { ...prev.billingConfig, charges: currentCharges },
+            };
+        });
+    };
+
+    const handleToggleBillingOption = (key) => (e) => {
+        const checked = e.target.checked;
+        setForm((prev) => ({
+            ...prev,
+            billingConfig: {
+                ...prev.billingConfig,
+                [key]: checked,
+            },
+        }));
+    };
+
     const loadSettings = async () => {
         if (!restaurantId) {
             setLoading(false);
@@ -204,7 +316,27 @@ export default function OwnerSettings() {
         try {
             setLoading(true);
             const res = await axios.get(`${API}/owner/${restaurantId}/settings`);
-            setForm({ ...emptyForm, ...(res.data?.restaurant || {}) });
+            const rest = res.data?.restaurant || {};
+            const billingConfig = rest.billingConfig || {
+                taxes: rest.defaultTaxPercent > 0 ? [{
+                    name: "GST",
+                    rate: Number(rest.defaultTaxPercent),
+                    type: "PERCENTAGE",
+                    isInclusive: rest.taxType === "INCLUSIVE",
+                    isEnabled: Boolean(rest.taxEnabled),
+                    appliesTo: ["ALL"],
+                }] : [],
+                charges: rest.serviceChargePercent > 0 ? [{
+                    name: "Service Charge",
+                    amount: Number(rest.serviceChargePercent),
+                    type: "PERCENTAGE",
+                    isEnabled: Boolean(rest.serviceChargeEnabled),
+                    appliesTo: ["ALL"],
+                }] : [],
+                roundOff: false,
+                allowTips: true,
+            };
+            setForm({ ...emptyForm, ...rest, billingConfig });
             setError("");
         } catch (err) {
             console.log(err);
@@ -229,15 +361,28 @@ export default function OwnerSettings() {
             setSuccess("");
             setError("");
 
+            const taxes = Array.isArray(form.billingConfig?.taxes) ? form.billingConfig.taxes : [];
+            const charges = Array.isArray(form.billingConfig?.charges) ? form.billingConfig.charges : [];
+            const activePercentTaxes = taxes.filter((t) => t.isEnabled && t.type !== "FIXED");
+            const sumTaxRate = activePercentTaxes.reduce((sum, t) => sum + Number(t.rate || 0), 0);
+            const hasInclusive = activePercentTaxes.some((t) => Boolean(t.isInclusive));
+            const activePercentCharges = charges.filter((c) => c.isEnabled && c.type === "PERCENTAGE");
+            const sumChargeRate = activePercentCharges.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
             const payload = {
                 ...form,
-                defaultTaxPercent: Number(form.defaultTaxPercent || 0),
-                serviceChargePercent: Number(form.serviceChargePercent || 0),
+                billingConfig: form.billingConfig,
+                taxEnabled: taxes.length > 0 ? taxes.some((t) => t.isEnabled) : Boolean(form.taxEnabled),
+                taxType: hasInclusive ? "INCLUSIVE" : (form.taxType || "EXCLUSIVE"),
+                defaultTaxPercent: taxes.length > 0 ? sumTaxRate : Number(form.defaultTaxPercent || 0),
+                serviceChargeEnabled: charges.length > 0 ? charges.some((c) => c.isEnabled) : Boolean(form.serviceChargeEnabled),
+                serviceChargePercent: charges.length > 0 ? sumChargeRate : Number(form.serviceChargePercent || 0),
                 nextInvoiceNumber: Number(form.nextInvoiceNumber || 1001),
             };
 
             const res = await axios.put(`${API}/owner/${restaurantId}/settings`, payload);
-            setForm({ ...emptyForm, ...(res.data?.restaurant || payload) });
+            const savedRest = res.data?.restaurant || payload;
+            setForm({ ...emptyForm, ...savedRest, billingConfig: savedRest.billingConfig || form.billingConfig });
             setSuccess("Settings updated successfully.");
         } catch (err) {
             console.log(err);
@@ -249,9 +394,9 @@ export default function OwnerSettings() {
 
     if (loading) {
         return (
-            <div className="theme-panel rounded-[28px] border border-white/10 bg-black/10 p-6">
-                <div className="inline-flex items-center gap-2 text-sm font-semibold">
-                    <LoaderCircle size={16} className="animate-spin" />
+            <div className="py-8 text-center text-xs font-semibold text-stone-500">
+                <div className="inline-flex items-center gap-2">
+                    <LoaderCircle size={15} className="animate-spin text-orange-600" />
                     Loading settings...
                 </div>
             </div>
@@ -259,54 +404,51 @@ export default function OwnerSettings() {
     }
 
     return (
-        <section className="space-y-5 pb-5">
+        <section className="space-y-2.5 pb-2">
             {error && (
-                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-semibold text-rose-800">
                     {error}
                 </div>
             )}
             {success && (
-                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-300">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-xs font-semibold text-emerald-800">
                     {success}
                 </div>
             )}
 
-            <div className="theme-panel relative overflow-hidden rounded-[30px] border border-white/10 bg-black/10 p-5 sm:p-6">
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.1),transparent_52%)]" />
-                <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            {/* Header Section - Words on Paper */}
+            <div className="pb-1.5 border-b border-orange-200/60">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <p className="theme-muted text-xs font-extrabold uppercase tracking-[0.24em]">
+                        <p className="text-[10px] font-extrabold uppercase tracking-widest text-stone-500">
                             Owner Profile
                         </p>
-                        <h2 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">
+                        <h2 className="mt-0.5 text-xl sm:text-2xl font-black text-stone-900 tracking-tight flex items-center gap-2">
+                            <OwnerMenuButton />
                             Restaurant Settings
                         </h2>
-                        <p className="theme-muted mt-2 max-w-2xl text-sm">
+                        <p className="mt-0.5 max-w-2xl text-xs text-stone-500 font-medium">
                             Keep business details, tax setup, and billing preferences up to date.
                         </p>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2 sm:justify-end">
-                        <div className="rounded-2xl border border-white/10 bg-black/15 px-2.5 py-1.5 text-xs sm:min-w-[138px] sm:max-w-[138px]">
-                            <p className="theme-muted text-[10px] uppercase tracking-[0.14em]">Profile</p>
-                            <p className="mt-1 font-semibold leading-tight">{completionPercent}% complete</p>
-                        </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/15 px-2.5 py-1.5 text-xs sm:min-w-[138px] sm:max-w-[138px]">
-                            <p className="theme-muted text-[10px] uppercase tracking-[0.14em]">Status</p>
-                            <p className="mt-1 font-semibold leading-tight">
-                                {Boolean(form.isActive) ? "Active restaurant" : "Inactive restaurant"}
-                            </p>
-                        </div>
+                    <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-orange-50 border border-orange-200/60 px-2 py-0.5 text-xs font-bold text-orange-800">
+                            Profile: {completionPercent}%
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 text-xs font-bold text-emerald-800">
+                            {Boolean(form.isActive) ? "Active" : "Inactive"}
+                        </span>
                     </div>
                 </div>
-                <div className="relative mt-4 h-2 overflow-hidden rounded-full bg-black/25">
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-stone-100">
                     <div
-                        className="h-full rounded-full bg-[var(--app-primary)] transition-all"
+                        className="h-full rounded-full bg-orange-500 transition-all"
                         style={{ width: `${completionPercent}%` }}
                     />
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-2.5">
                 <article className={sectionClass}>
                     <SectionHeader
                         icon={Building2}
@@ -314,7 +456,7 @@ export default function OwnerSettings() {
                         subtitle="Public profile information shown on receipts and in owner tools."
                         logoSrc={logoPreviewSrc}
                     />
-                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div className="mt-1.5 grid gap-x-4 gap-y-1.5 md:grid-cols-2">
                         <Field label="Restaurant Name">
                             <input
                                 className={inputClass}
@@ -348,7 +490,7 @@ export default function OwnerSettings() {
                                 onChange={setField("email")}
                             />
                         </Field>
-                        <Field label="Business Phone" className="md:col-span-2">
+                        <Field label="Business Phone">
                             <input
                                 className={inputClass}
                                 placeholder="+91 9999999999"
@@ -358,10 +500,10 @@ export default function OwnerSettings() {
                         </Field>
                     </div>
 
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="h-14 w-14 overflow-hidden rounded-2xl border border-white/15 bg-black/15">
+                    <div className="mt-2 pt-2 border-t border-stone-200/60">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex items-center gap-2">
+                                <div className="h-8 w-8 overflow-hidden rounded-lg border border-stone-200 bg-stone-50 shrink-0">
                                     {logoPreviewSrc ? (
                                         <img
                                             src={logoPreviewSrc}
@@ -371,25 +513,25 @@ export default function OwnerSettings() {
                                         />
                                     ) : (
                                         <div className="flex h-full w-full items-center justify-center">
-                                            <Upload size={20} className="theme-muted" />
+                                            <Upload size={14} className="text-stone-400" />
                                         </div>
                                     )}
                                 </div>
                                 <div>
-                                    <p className="text-sm font-semibold">Restaurant Logo</p>
-                                    <p className="theme-muted text-xs">
+                                    <p className="text-xs font-bold text-stone-900">Restaurant Logo</p>
+                                    <p className="text-[10px] text-stone-500">
                                         Recommended: square PNG/JPG/WebP/SVG
                                     </p>
                                     {logoPreviewFailed ? (
-                                        <p className="mt-1 text-xs text-amber-600">
+                                        <p className="mt-0.5 text-xs text-amber-700">
                                             Logo URL is unreachable. Re-upload or use a working URL.
                                         </p>
                                     ) : null}
                                 </div>
                             </div>
 
-                            <label className="theme-soft-button inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold">
-                                <Upload size={14} />
+                            <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 px-2.5 py-1 text-xs font-bold text-stone-800 transition">
+                                <Upload size={13} />
                                 {logoUploading ? "Uploading..." : "Upload New Logo"}
                                 <input
                                     type="file"
@@ -401,7 +543,7 @@ export default function OwnerSettings() {
                             </label>
                         </div>
 
-                        <Field label="Logo URL" className="mt-3">
+                        <Field label="Logo URL" className="mt-1.5">
                             <input
                                 className={inputClass}
                                 placeholder="https://example.com/logo.png"
@@ -412,14 +554,14 @@ export default function OwnerSettings() {
                     </div>
                 </article>
 
-                <div className="grid gap-4 xl:grid-cols-2">
-                    <article className={`${sectionClass} h-full`}>
+                <div className="grid gap-3 lg:grid-cols-2">
+                    <article className={sectionClass}>
                         <SectionHeader
                             icon={MapPin}
                             title="Address & Identity"
                             subtitle="Used for invoices, legal records, and compliance."
                         />
-                        <div className="mt-4 grid gap-4 md:grid-cols-2">
+                        <div className="mt-1.5 grid gap-x-4 gap-y-1.5 md:grid-cols-2">
                             <Field label="Address Line" className="md:col-span-2">
                                 <input
                                     className={inputClass}
@@ -460,7 +602,7 @@ export default function OwnerSettings() {
                                     onChange={setField("pincode")}
                                 />
                             </Field>
-                            <Field label="GST Number" className="md:col-span-2">
+                            <Field label="GST Number">
                                 <input
                                     className={inputClass}
                                     placeholder="29ABCDE1234F1Z5"
@@ -469,76 +611,238 @@ export default function OwnerSettings() {
                                 />
                             </Field>
                         </div>
+
+                        <div className="mt-2 pt-2 border-t border-stone-200/60">
+                            <MapLocationPicker
+                                latitude={form.latitude}
+                                longitude={form.longitude}
+                                ownerPhone={form.phone || form.ownerPhone}
+                                ownerName={form.name || form.legalName}
+                                onSelectLocation={({ lat, lng }) => {
+                                    setForm((prev) => ({ ...prev, latitude: lat, longitude: lng }));
+                                }}
+                            />
+                        </div>
                     </article>
 
-                    <article className={`${sectionClass} h-full`}>
+                    <article className={sectionClass}>
                         <SectionHeader
                             icon={ReceiptText}
-                            title="Tax & Billing"
-                            subtitle="Control tax mode, service charge, and invoice numbering."
+                            title="Tax & Billing Configuration"
+                            subtitle="Configure custom taxes (CGST, SGST, VAT), extra charges, round-off, and invoice settings."
                         />
 
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                            <label className="theme-soft-button flex cursor-pointer items-center justify-between gap-3 rounded-2xl px-4 py-3">
+                        {/* TAXES SECTION */}
+                        <div className="mt-3 rounded-xl border border-stone-200 bg-stone-50/50 p-3">
+                            <div className="flex items-center justify-between mb-2">
                                 <div>
-                                    <p className="text-sm font-semibold">Tax Enabled</p>
-                                    <p className="theme-muted text-xs">{taxStatusText}</p>
+                                    <h4 className="text-xs font-bold text-stone-900">Custom Taxes</h4>
+                                    <p className="text-[10px] text-stone-500">Configure restaurant-specific taxes (e.g. CGST 2.5%, SGST 2.5%, VAT).</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleAddTax}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-orange-700 transition"
+                                >
+                                    <Plus size={12} /> Add Tax
+                                </button>
+                            </div>
+
+                            {(form.billingConfig?.taxes || []).length === 0 ? (
+                                <p className="text-[11px] text-stone-400 italic py-1">No taxes configured. Orders will be tax-free unless a tax is added.</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {(form.billingConfig?.taxes || []).map((tax, idx) => (
+                                        <div key={idx} className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 bg-white p-2 text-xs">
+                                            <input
+                                                type="text"
+                                                placeholder="Tax Name (e.g. CGST)"
+                                                value={tax.name || ""}
+                                                onChange={(e) => handleUpdateTax(idx, "name", e.target.value)}
+                                                className="w-28 rounded border border-stone-200 px-2 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                            />
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    placeholder="Rate"
+                                                    value={tax.rate ?? 0}
+                                                    onChange={(e) => handleUpdateTax(idx, "rate", Number(e.target.value))}
+                                                    className="w-16 rounded border border-stone-200 px-2 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                                />
+                                                <select
+                                                    value={tax.type || "PERCENTAGE"}
+                                                    onChange={(e) => handleUpdateTax(idx, "type", e.target.value)}
+                                                    className="rounded border border-stone-200 bg-white px-1.5 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                                >
+                                                    <option value="PERCENTAGE">%</option>
+                                                    <option value="FIXED">₹</option>
+                                                </select>
+                                            </div>
+
+                                            <select
+                                                value={Array.isArray(tax.appliesTo) ? (tax.appliesTo[0] || "ALL") : (tax.appliesTo || "ALL")}
+                                                onChange={(e) => handleUpdateTax(idx, "appliesTo", [e.target.value])}
+                                                className="rounded border border-stone-200 bg-white px-2 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                            >
+                                                <option value="ALL">All Orders</option>
+                                                <option value="DINE_IN">Dine-In Only</option>
+                                                <option value="TAKEAWAY">Takeaway Only</option>
+                                                <option value="DELIVERY">Delivery Only</option>
+                                                <option value="PICKUP">Pickup Only</option>
+                                            </select>
+
+                                            <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-stone-700">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(tax.isInclusive)}
+                                                    onChange={(e) => handleUpdateTax(idx, "isInclusive", e.target.checked)}
+                                                    className="h-3 w-3 accent-orange-600"
+                                                />
+                                                Inclusive in price
+                                            </label>
+
+                                            <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-stone-700">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(tax.isEnabled)}
+                                                    onChange={(e) => handleUpdateTax(idx, "isEnabled", e.target.checked)}
+                                                    className="h-3 w-3 accent-orange-600"
+                                                />
+                                                Active
+                                            </label>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveTax(idx)}
+                                                className="ml-auto text-stone-400 hover:text-rose-600 p-1 transition"
+                                                title="Delete Tax"
+                                            >
+                                                <Trash2 size={13} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* EXTRA CHARGES SECTION */}
+                        <div className="mt-3 rounded-xl border border-stone-200 bg-stone-50/50 p-3">
+                            <div className="flex items-center justify-between mb-2">
+                                <div>
+                                    <h4 className="text-xs font-bold text-stone-900">Extra Charges & Surcharges</h4>
+                                    <p className="text-[10px] text-stone-500">Configure packaging fees, delivery charges, service charge, or custom surcharges.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleAddCharge}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-orange-700 transition"
+                                >
+                                    <Plus size={12} /> Add Charge
+                                </button>
+                            </div>
+
+                            {(form.billingConfig?.charges || []).length === 0 ? (
+                                <p className="text-[11px] text-stone-400 italic py-1">No extra charges configured.</p>
+                            ) : (
+                                <div className="space-y-2">
+                                    {(form.billingConfig?.charges || []).map((charge, idx) => (
+                                        <div key={idx} className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 bg-white p-2 text-xs">
+                                            <input
+                                                type="text"
+                                                placeholder="Charge Name (e.g. Packaging)"
+                                                value={charge.name || ""}
+                                                onChange={(e) => handleUpdateCharge(idx, "name", e.target.value)}
+                                                className="w-32 rounded border border-stone-200 px-2 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                            />
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    placeholder="Amount"
+                                                    value={charge.amount ?? 0}
+                                                    onChange={(e) => handleUpdateCharge(idx, "amount", Number(e.target.value))}
+                                                    className="w-16 rounded border border-stone-200 px-2 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                                />
+                                                <select
+                                                    value={charge.type || "FIXED"}
+                                                    onChange={(e) => handleUpdateCharge(idx, "type", e.target.value)}
+                                                    className="rounded border border-stone-200 bg-white px-1.5 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                                >
+                                                    <option value="FIXED">₹ (Flat)</option>
+                                                    <option value="PERCENTAGE">%</option>
+                                                </select>
+                                            </div>
+
+                                            <select
+                                                value={Array.isArray(charge.appliesTo) ? (charge.appliesTo[0] || "ALL") : (charge.appliesTo || "ALL")}
+                                                onChange={(e) => handleUpdateCharge(idx, "appliesTo", [e.target.value])}
+                                                className="rounded border border-stone-200 bg-white px-2 py-1 text-xs font-semibold focus:border-stone-800 outline-none"
+                                            >
+                                                <option value="ALL">All Orders</option>
+                                                <option value="DINE_IN">Dine-In Only</option>
+                                                <option value="TAKEAWAY">Takeaway Only</option>
+                                                <option value="DELIVERY">Delivery Only</option>
+                                                <option value="PICKUP">Pickup Only</option>
+                                            </select>
+
+                                            <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-stone-700">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(charge.isEnabled)}
+                                                    onChange={(e) => handleUpdateCharge(idx, "isEnabled", e.target.checked)}
+                                                    className="h-3 w-3 accent-orange-600"
+                                                />
+                                                Active
+                                            </label>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveCharge(idx)}
+                                                className="ml-auto text-stone-400 hover:text-rose-600 p-1 transition"
+                                                title="Delete Charge"
+                                            >
+                                                <Trash2 size={13} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ROUND-OFF & TIPS */}
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-stone-200/60 py-1">
+                                <div>
+                                    <p className="text-xs font-bold text-stone-900">Allow Customer Tips</p>
+                                    <p className="text-[10px] text-stone-500">Enable optional tip selection during checkout.</p>
                                 </div>
                                 <input
                                     type="checkbox"
-                                    checked={Boolean(form.taxEnabled)}
-                                    onChange={setChecked("taxEnabled")}
-                                    className="h-4 w-4 accent-[var(--app-primary)]"
+                                    checked={form.billingConfig?.allowTips !== false}
+                                    onChange={handleToggleBillingOption("allowTips")}
+                                    className="h-3.5 w-3.5 accent-orange-600"
                                 />
                             </label>
 
-                            <label className="theme-soft-button flex cursor-pointer items-center justify-between gap-3 rounded-2xl px-4 py-3">
+                            <label className="flex cursor-pointer items-center justify-between gap-2 border-b border-stone-200/60 py-1">
                                 <div>
-                                    <p className="text-sm font-semibold">Service Charge</p>
-                                    <p className="theme-muted text-xs">{serviceChargeText}</p>
+                                    <p className="text-xs font-bold text-stone-900">Round-Off Grand Total</p>
+                                    <p className="text-[10px] text-stone-500">Automatically round the final payable amount to the nearest whole rupee.</p>
                                 </div>
                                 <input
                                     type="checkbox"
-                                    checked={Boolean(form.serviceChargeEnabled)}
-                                    onChange={setChecked("serviceChargeEnabled")}
-                                    className="h-4 w-4 accent-[var(--app-primary)]"
+                                    checked={Boolean(form.billingConfig?.roundOff)}
+                                    onChange={handleToggleBillingOption("roundOff")}
+                                    className="h-3.5 w-3.5 accent-orange-600"
                                 />
                             </label>
                         </div>
 
-                        <div className="mt-4 grid gap-4 md:grid-cols-2">
-                            <Field label="Tax Type">
-                                <select
-                                    className={inputClass}
-                                    value={form.taxType || "EXCLUSIVE"}
-                                    onChange={setField("taxType")}
-                                >
-                                    <option value="EXCLUSIVE">EXCLUSIVE</option>
-                                    <option value="INCLUSIVE">INCLUSIVE</option>
-                                </select>
-                            </Field>
-                            <Field label="Default Tax Percent">
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    className={inputClass}
-                                    placeholder="5"
-                                    value={form.defaultTaxPercent ?? 0}
-                                    onChange={setField("defaultTaxPercent")}
-                                />
-                            </Field>
-                            <Field label="Service Charge Percent">
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    className={inputClass}
-                                    placeholder="10"
-                                    value={form.serviceChargePercent ?? 0}
-                                    onChange={setField("serviceChargePercent")}
-                                />
-                            </Field>
+                        {/* INVOICE NUMBERING */}
+                        <div className="mt-3 grid gap-x-4 gap-y-1.5 md:grid-cols-2">
                             <Field label="Invoice Prefix" hint="Example: CK-2026-">
                                 <input
                                     className={inputClass}
@@ -547,7 +851,7 @@ export default function OwnerSettings() {
                                     onChange={setField("invoicePrefix")}
                                 />
                             </Field>
-                            <Field label="Next Invoice Number" className="md:col-span-2">
+                            <Field label="Next Invoice Number">
                                 <input
                                     type="number"
                                     min="1"
@@ -568,7 +872,7 @@ export default function OwnerSettings() {
                         title="Operations"
                         subtitle="Core running preferences for timezone, currency, and availability."
                     />
-                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <div className="mt-1.5 grid gap-x-4 gap-y-1.5 md:grid-cols-2">
                         <Field label="Timezone">
                             <input
                                 className={inputClass}
@@ -585,12 +889,12 @@ export default function OwnerSettings() {
                                 onChange={setField("currency")}
                             />
                         </Field>
-                        <label className="theme-soft-button flex cursor-pointer items-center justify-between rounded-2xl px-4 py-3 md:col-span-2">
+                        <label className="flex cursor-pointer items-center justify-between border-t border-stone-200/60 pt-1.5 md:col-span-2">
                             <div className="flex items-center gap-2">
-                                <ShieldCheck size={16} className="theme-accent-text" />
+                                <ShieldCheck size={15} className="text-orange-600" />
                                 <div>
-                                    <p className="text-sm font-semibold">Restaurant Visibility</p>
-                                    <p className="theme-muted text-xs">
+                                    <p className="text-xs font-bold text-stone-900">Restaurant Visibility</p>
+                                    <p className="text-[10px] text-stone-500">
                                         Make this restaurant available for orders
                                     </p>
                                 </div>
@@ -599,71 +903,67 @@ export default function OwnerSettings() {
                                 type="checkbox"
                                 checked={Boolean(form.isActive)}
                                 onChange={setChecked("isActive")}
-                                className="h-4 w-4 accent-[var(--app-primary)]"
+                                className="h-3.5 w-3.5 accent-orange-600"
                             />
                         </label>
                     </div>
                 </article>
 
-                <article className="theme-panel rounded-[28px] border border-white/10 bg-black/10 p-5 sm:p-6">
+                <article className={sectionClass}>
                     <SectionHeader
                         icon={Palette}
                         title="Appearance"
                         subtitle="Choose the restaurant theme shown across staff and customer screens."
                     />
-                    <div className="relative mt-4 max-w-xl overflow-visible">
-                        <p className="theme-muted mb-2 text-sm font-semibold">UI Theme</p>
+                    <div className="mt-1.5 max-w-xl">
+                        <p className="text-xs font-bold text-stone-700 mb-1">UI Theme</p>
                         <ThemeSelector variant="compact" />
                     </div>
                 </article>
 
-                <article className="theme-panel overflow-hidden rounded-[28px] border border-red-500/30 bg-red-500/5 p-5 sm:p-6">
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 text-red-500">
-                                <Trash2 size={18} />
+                <article className="pb-2 border-b border-rose-200/60">
+                    <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-600">
+                                <Trash2 size={14} />
                             </span>
                             <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-red-500">Danger Zone</p>
-                                <h3 className="text-lg font-semibold text-red-500 sm:text-xl">Delete Account</h3>
-                                <p className="theme-muted mt-0.5 text-xs sm:text-sm">
+                                <p className="text-[10px] font-extrabold uppercase tracking-wider text-rose-600">Danger Zone</p>
+                                <h3 className="text-xs sm:text-sm font-bold text-rose-800">Delete Account</h3>
+                                <p className="text-[10px] text-stone-500">
                                     Permanently delete your account, restaurant data, and access.
                                 </p>
                             </div>
                         </div>
                     </div>
-                    <div className="mt-4 pt-2">
+                    <div className="mt-1.5">
                         <Link
                             to="/delete-account"
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/40 bg-red-500/15 px-4 py-2.5 text-sm font-semibold text-red-400 transition hover:bg-red-500/25"
+                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1 text-xs font-bold text-rose-800 transition"
                         >
-                            <Trash2 size={16} />
+                            <Trash2 size={13} />
                             Delete Account
                         </Link>
                     </div>
                 </article>
 
-                <div className="theme-panel rounded-2xl border border-white/10 bg-black/10 p-3 sm:p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-center gap-2">
-                            <UserCircle2 size={16} className="theme-accent-text" />
-                            <p className="theme-muted text-xs sm:text-sm">
-                                Review changes before saving to keep data consistent.
-                            </p>
-                        </div>
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className="theme-button inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold disabled:opacity-70"
-                        >
-                            {saving ? (
-                                <LoaderCircle size={16} className="animate-spin" />
-                            ) : (
-                                <Save size={16} />
-                            )}
-                            Save Settings
-                        </button>
+                <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center gap-2 text-xs text-stone-500">
+                        <UserCircle2 size={15} className="text-orange-600" />
+                        <span>Review changes before saving.</span>
                     </div>
+                    <button
+                        type="submit"
+                        disabled={saving}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 text-xs sm:text-sm font-bold shadow-sm transition disabled:opacity-70"
+                    >
+                        {saving ? (
+                            <LoaderCircle size={15} className="animate-spin" />
+                        ) : (
+                            <Save size={15} />
+                        )}
+                        Save Settings
+                    </button>
                 </div>
             </form>
         </section>

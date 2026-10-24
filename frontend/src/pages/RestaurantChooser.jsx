@@ -1,50 +1,67 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { ChevronRight, Dot, Navigation, Search, UserCircle2 } from "lucide-react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+    BarChart3,
+    ChefHat,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    ChevronUp,
+    Dot,
+    Heart,
+    MapPin,
+    Navigation,
+    Plus,
+    QrCode,
+    Receipt,
+    Search,
+    ShoppingBag,
+    Store,
+    Truck,
+    UserCircle2,
+    UtensilsCrossed,
+} from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { useRestaurantContext } from "../context/RestaurantContext";
 import { api, cachedGet } from "../utils/apiClient";
 import useCachedGet from "../hooks/useCachedGet";
-import { resolveImageUrl } from "../utils/resolveImageUrl";
+import { resolveImageUrl, getItemImageUrl } from "../utils/resolveImageUrl";
+import ItemImageCarousel from "../components/ItemImageCarousel";
 import BrandLogo from "../components/BrandLogo";
 import CartDrawer from "../components/CartDrawer";
 import VegModeToggle from "../components/VegModeToggle";
+import CustomerNotificationBell from "../components/CustomerNotificationBell";
 import Footer from "../components/Footer";
+import PromoBannerSlider from "../components/PromoBannerSlider";
+import PopularCategories, { normalizeCategoryName } from "../components/PopularCategories";
+import {
+    TOBACCO_KEYWORDS,
+    TOBACCO_QUICK_TAGS,
+    DEFAULT_TOBACCO_ITEMS,
+    isTobaccoItem,
+    isTobaccoText,
+    isTobaccoAgeConfirmed,
+    setTobaccoAgeConfirmed,
+} from "../utils/tobaccoUtils";
+import TobaccoBanner from "../components/tobacco/TobaccoBanner";
+import TobaccoAgeVerificationModal from "../components/tobacco/TobaccoAgeVerificationModal";
+import BlinkitTobaccoCard from "../components/tobacco/BlinkitTobaccoCard";
+import CustomerAddressModal, {
+    formatAddressLine,
+    getStoredActiveAddress,
+    setStoredActiveAddress,
+} from "../components/CustomerAddressModal";
+import SeoHead from "../components/SeoHead";
+import NearbyRestaurantsSection from "../components/NearbyRestaurantsSection";
 import { buildRestaurantMenuPath } from "../utils/restaurantMenuNavigation";
 import { isVegModeItem } from "./restaurant/RestaurantMenu";
+import { getCustomerFavorites, toggleFavoriteMenuItem } from "../utils/customerFavorites";
+import { showToast } from "../utils/toast";
 
-const toRad = (deg) => (Number(deg) * Math.PI) / 180;
+// Distance calculation & delivery eligibility are authoritatively handled by the backend
+// (/api/restaurants/nearby via restaurantLocationService.js)
 
-const haversineKm = (lat1, lon1, lat2, lon2) => {
-    const R = 6371;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(a));
-};
-
-const hasCoords = (restaurant) => Number.isFinite(Number(restaurant?.latitude)) && Number.isFinite(Number(restaurant?.longitude));
-
-const pickNearestRestaurant = (restaurants, lat, lon) => {
-    const candidates = (restaurants || []).filter(hasCoords);
-    if (!candidates.length) return null;
-
-    let best = candidates[0];
-    let bestKm = haversineKm(lat, lon, Number(best.latitude), Number(best.longitude));
-
-    for (const r of candidates.slice(1)) {
-        const km = haversineKm(lat, lon, Number(r.latitude), Number(r.longitude));
-        if (km < bestKm) {
-            best = r;
-            bestKm = km;
-        }
-    }
-
-    return { restaurant: best, distanceKm: bestKm };
-};
 
 const normalizeRestaurantList = (data) => {
     if (Array.isArray(data)) return data;
@@ -75,8 +92,9 @@ const getCurrentPosition = () =>
     });
 
 export default function RestaurantChooser() {
+    const navigate = useNavigate();
     const { customer } = useAuth();
-    const { addToCart, cart, total } = useCart();
+    const { addToCart, removeFromCart, cart, total } = useCart();
     const { restaurantContext, setRestaurantContext } = useRestaurantContext();
     const [search, setSearch] = useState("");
     const deferredSearch = useDeferredValue(normalizeSearch(search));
@@ -86,9 +104,71 @@ export default function RestaurantChooser() {
     const [selectedItem, setSelectedItem] = useState(null);
     const [popupAnchor, setPopupAnchor] = useState(null);
     const [cartOpen, setCartOpen] = useState(false);
+    const [selectedCategory, setSelectedCategory] = useState("");
+    const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
+    const [activeAddress, setActiveAddress] = useState(() => getStoredActiveAddress());
+    const [showAgeModal, setShowAgeModal] = useState(false);
+    const [pendingTobaccoItem, setPendingTobaccoItem] = useState(null);
     const vegModeEnabled = Boolean(restaurantContext?.vegOnly);
     const profilePath = customer ? "/profile/overview?scope=customer" : "/login?mode=customer";
     const profileLabel = customer ? "Profile" : "Login";
+
+    const [favorites, setFavorites] = useState(() => getCustomerFavorites());
+
+    useEffect(() => {
+        const syncFavorites = () => {
+            setFavorites(getCustomerFavorites());
+        };
+        window.addEventListener("storage", syncFavorites);
+        window.addEventListener("focus", syncFavorites);
+        return () => {
+            window.removeEventListener("storage", syncFavorites);
+            window.removeEventListener("focus", syncFavorites);
+        };
+    }, []);
+
+    const favoriteKeySet = useMemo(() => {
+        return new Set((Array.isArray(favorites) ? favorites : []).map((fav) => String(fav?.key || "")));
+    }, [favorites]);
+
+    const handleToggleFavorite = useCallback((item) => {
+        const slug = String(item?.restaurant?.slug || item?.restaurantSlug || "").trim();
+        const name = String(item?.restaurant?.name || item?.restaurantName || slug).trim();
+        const { next, added } = toggleFavoriteMenuItem({
+            restaurantSlug: slug,
+            restaurantName: name,
+            item,
+        });
+        setFavorites(next);
+        showToast({
+            title: added ? "Saved to favorites" : "Removed from favorites",
+            message: added ? "You can find it in Profile -> Favorites." : "Removed from your favorites list.",
+            variant: added ? "success" : "default",
+        });
+    }, []);
+
+    const isTobaccoSearch = useMemo(() => {
+        return isTobaccoText(search) || isTobaccoText(selectedCategory);
+    }, [search, selectedCategory]);
+
+    const handleViewTobaccoItems = () => {
+        if (!isTobaccoAgeConfirmed()) {
+            setShowAgeModal(true);
+        } else {
+            navigate("/tobacco");
+        }
+    };
+
+    const handleAgeConfirm = () => {
+        setTobaccoAgeConfirmed();
+        setShowAgeModal(false);
+        navigate("/tobacco");
+    };
+
+    const handleAgeCancel = () => {
+        setShowAgeModal(false);
+        setPendingTobaccoItem(null);
+    };
 
     const { data: restaurantData, loading: restaurantLoading, error: restaurantError, refresh: refreshRestaurants } = useCachedGet("/restaurants", {
         params: {
@@ -142,15 +222,29 @@ export default function RestaurantChooser() {
         staleMs: 15_000,
     });
 
-    const visibleItems = Array.isArray(catalogData?.items)
-        ? catalogData.items.filter((item) => !vegModeEnabled || (typeof isVegModeItem === "function" ? isVegModeItem(item) : true))
-        : [];
+    const visibleItems = useMemo(() => {
+        let items = Array.isArray(catalogData?.items) ? catalogData.items : [];
+        if (vegModeEnabled) {
+            items = items.filter((item) => (typeof isVegModeItem === "function" ? isVegModeItem(item) : true));
+        }
+        if (selectedCategory) {
+            const target = normalizeCategoryName(selectedCategory).toLowerCase();
+            items = items.filter((item) => {
+                const cat = normalizeCategoryName(item?.category).toLowerCase();
+                const name = String(item?.name || "").toLowerCase();
+                return cat.includes(target) || target.includes(cat) || name.includes(target);
+            });
+        }
+
+        // STRICT RULE: Never display tobacco products on the general customer home page feed.
+        return items.filter((item) => !isTobaccoItem(item));
+    }, [catalogData?.items, vegModeEnabled, selectedCategory]);
     const itemSections = useMemo(() => {
         const groups = new Map();
 
         for (const item of visibleItems) {
             const rawCategory = String(item?.category || "").trim();
-            const label = rawCategory || "Other";
+            const label = normalizeCategoryName(rawCategory) || "Other";
             const key = label.toLowerCase();
 
             if (!groups.has(key)) {
@@ -169,6 +263,11 @@ export default function RestaurantChooser() {
     const activeSearchError = catalogError || "";
 
     const addItemToCart = (item) => {
+        if (isTobaccoItem(item) && !isTobaccoAgeConfirmed()) {
+            setPendingTobaccoItem(item);
+            setShowAgeModal(true);
+            return;
+        }
         const slug = String(item?.restaurant?.slug || "").trim();
         if (slug) {
             setRestaurantContext({
@@ -203,24 +302,24 @@ export default function RestaurantChooser() {
                 return;
             }
 
-            const coordsData = await cachedGet("/restaurants", {
-                params: { coordsOnly: 1 },
-                ttlMs: 5 * 60_000,
-                staleMs: 30 * 60_000,
+            const res = await api.get("/api/restaurants/nearby", {
+                params: { lat, lng: lon, radius: 5, limit: 1 },
             });
-            const allRestaurants = normalizeRestaurantList(coordsData);
-            const nearest = pickNearestRestaurant(
-                Array.isArray(allRestaurants) && allRestaurants.length ? allRestaurants : browseRestaurants,
-                lat,
-                lon
-            );
-            if (!nearest?.restaurant) {
-                setLocationHint("Restaurant coordinates not configured. Please select a restaurant.");
+            const nearest = res?.data?.restaurants?.[0];
+            if (!nearest) {
+                setLocationHint("No restaurants found within 5 km. Please select a restaurant.");
                 return;
             }
 
-            const roundedKm = Math.max(0, Math.round(nearest.distanceKm * 10) / 10);
-            setLocationHint(`Selected ${nearest.restaurant.name} (${roundedKm} km away) based on your current location.`);
+            setRestaurantContext({
+                id: nearest.id,
+                name: nearest.name,
+                slug: nearest.slug,
+                logo: nearest.logoUrl || null,
+                tableNo: null,
+            });
+
+            setLocationHint(`Selected ${nearest.name} (${nearest.distanceKm} km away) based on your current location.`);
         } catch {
             // Permission denied or timeout.
             setLocationHint("Location permission denied or unavailable. Please select a restaurant.");
@@ -241,71 +340,146 @@ export default function RestaurantChooser() {
     };
 
     return (
-        <div className="theme-page min-h-screen px-1 py-1.5 sm:px-4 sm:py-6 md:px-8 md:py-12">
-            <div className="mx-auto w-full max-w-none">
-                <section className="chooser-shell theme-panel relative overflow-hidden rounded-[24px] p-4 backdrop-blur sm:rounded-[28px] sm:p-5 md:rounded-[32px] md:p-8">
+        <div className="theme-page min-h-screen w-full p-0">
+            <div className="w-full">
+                <section className="chooser-shell relative overflow-hidden border-none shadow-none rounded-none px-3 pt-1.5 pb-4 sm:px-6 sm:pt-2 sm:pb-6 md:px-8 md:pt-2.5 md:pb-8">
                     <div className="pointer-events-none absolute -right-10 top-0 h-40 w-40 rounded-full bg-[color:var(--app-accent)]/10 blur-3xl" />
                     <div className="pointer-events-none absolute -left-12 bottom-0 h-52 w-52 rounded-full bg-[#c78f4a]/10 blur-3xl" />
 
-                    <header className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="flex w-full items-start gap-3 sm:items-center sm:gap-4 lg:max-w-[58%]">
-                            <div className="chooser-logo-shell theme-card flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl sm:h-14 sm:w-14">
-                                <BrandLogo className="h-8 w-8 sm:h-9 sm:w-9" title="Brand logo" />
-                            </div>
+                    <header className="relative z-10 flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+                        {/* Left: Tiffzy branding */}
+                        <div className="flex shrink-0 items-center gap-3">
+                            <BrandLogo className="h-9 w-9 sm:h-10 sm:w-10 object-contain shrink-0" title="Tiffzy Logo" variant="primary" />
                             <div className="min-w-0">
-                                <span className="inline-flex bg-gradient-to-r from-[#ff8a1f] via-[#d97706] to-[#8a4b11] bg-clip-text text-[12px] font-black uppercase tracking-[0.5em] text-transparent drop-shadow-[0_1px_0_rgba(255,255,255,0.45)] sm:text-[13px]">
+                                <h1 className="bg-gradient-to-r from-[#ff8a1f] via-[#ea580c] to-[#9a3412] bg-clip-text text-2xl font-black tracking-tight text-transparent sm:text-3xl leading-none">
                                     Tiffzy
-                                </span>
+                                </h1>
+                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-[#d97706] sm:text-xs leading-tight mt-0.5">
+                                    Food Business Platform
+                                </p>
+                                <p className="text-[10px] font-semibold text-[color:var(--app-muted)] leading-tight truncate">
+                                    All-in-one platform for restaurants and food businesses
+                                </p>
                             </div>
                         </div>
 
-                        <div className="relative z-10 flex w-full flex-col items-stretch gap-3 lg:max-w-[680px] lg:items-end">
-                            <div className="flex w-full items-center justify-end gap-2 overflow-x-auto rounded-none border-0 bg-transparent p-0 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:gap-3 lg:w-fit lg:overflow-visible">
-                                <VegModeToggle
-                                    enabled={vegModeEnabled}
-                                    onToggle={handleVegModeToggle}
-                                    compact
-                                    className="shrink-0"
-                                />
-
-                                <Link
-                                    to={profilePath}
-                                    style={{ border: "none", boxShadow: "none" }}
-                                    className="chooser-chip theme-soft-button inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl px-3 py-2 text-[11px] font-semibold sm:px-4 sm:py-3 sm:text-sm"
-                                >
-                                    <UserCircle2 size={16} />
-                                    {profileLabel}
-                                </Link>
-
-                                <button
-                                    onClick={() => detectNearest({ userTriggered: true })}
-                                    disabled={detecting || restaurantLoading || browseRestaurants.length === 0}
-                                    style={{ border: "none", boxShadow: "none" }}
-                                    className="chooser-chip theme-soft-button inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl px-3 py-2 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-70 sm:px-4 sm:py-3 sm:text-sm"
-                                >
-                                    <Navigation size={16} />
-                                    {detecting ? "Detecting..." : "Use my location"}
-                                </button>
-                            </div>
-
-                            <div className="relative w-full max-w-[520px] self-end">
-                                <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 theme-muted" size={18} />
+                        {/* Right: ONE SINGLE ROW: [Search...] [Veg] [🔔] [Profile] [Deliver] */}
+                        <div className="flex w-full flex-wrap items-center justify-start gap-1.5 sm:gap-2 lg:w-auto lg:flex-nowrap lg:justify-end">
+                            {/* Search bar */}
+                            <div className="relative w-full sm:w-[280px] lg:w-[320px] xl:w-[420px] 2xl:w-[460px]">
+                                <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 theme-muted" size={16} />
                                 <input
                                     value={search}
                                     onChange={(e) => setSearch(e.target.value)}
-                                    placeholder="Search dishes..."
-                                    className="chooser-input theme-input w-full rounded-full border border-[var(--app-border)] bg-white/70 py-2.5 pl-11 pr-4 text-sm shadow-[0_10px_24px_rgba(104,70,37,0.08)] outline-none placeholder:text-[color:var(--app-muted)] sm:py-3"
+                                    placeholder="Search dishes across restaurants..."
+                                    className="chooser-input theme-input w-full rounded-full border border-[var(--app-border)] bg-white/70 py-2 pl-9 pr-4 text-xs shadow-[0_4px_16px_rgba(104,70,37,0.06)] outline-none placeholder:text-[color:var(--app-muted)] sm:text-sm"
                                 />
                             </div>
+
+                            {/* Veg Mode Toggle */}
+                            <VegModeToggle
+                                enabled={vegModeEnabled}
+                                onToggle={handleVegModeToggle}
+                                compact
+                                className="shrink-0"
+                            />
+
+                            {/* Notification Bell */}
+                            <CustomerNotificationBell className="shrink-0" />
+
+                            {/* Profile Button */}
+                            <Link
+                                to={profilePath}
+                                style={{ border: "none", boxShadow: "none" }}
+                                className="chooser-chip theme-soft-button inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-xs font-semibold sm:px-3 sm:text-xs"
+                            >
+                                <UserCircle2 size={16} />
+                                {profileLabel}
+                            </Link>
+
+                            {/* Delivery Address Selector */}
+                            <button
+                                type="button"
+                                onClick={() => setIsAddressModalOpen(true)}
+                                style={{ border: "none", boxShadow: "none" }}
+                                className="chooser-chip theme-soft-button inline-flex shrink-0 items-center justify-between gap-1.5 rounded-xl bg-[#fe5102]/10 px-2.5 py-2 text-xs font-bold text-[#fe5102] hover:bg-[#fe5102]/20 sm:px-3 sm:text-xs max-w-[200px] sm:max-w-[240px] xl:max-w-[280px]"
+                                title={formatAddressLine(activeAddress) || "Select Delivery Address"}
+                            >
+                                <div className="flex items-center gap-1.5 min-w-0 truncate text-left">
+                                    <MapPin size={15} className="shrink-0 text-[#fe5102]" />
+                                    <span className="font-black text-[#fe5102] uppercase tracking-wider text-[10px] shrink-0">
+                                        {activeAddress?.label ? `${activeAddress.label}:` : "Deliver:"}
+                                    </span>
+                                    <span className="truncate text-xs font-semibold text-[color:var(--app-text)]">
+                                        {formatAddressLine(activeAddress) || "Select Address..."}
+                                    </span>
+                                </div>
+                                <ChevronDown size={14} className="shrink-0 text-[color:var(--app-muted)] ml-0.5" />
+                            </button>
                         </div>
                     </header>
 
-                    <div className="mt-4 space-y-3 sm:mt-5 sm:space-y-4">
-                        {locationHint ? (
-                            <div className="rounded-2xl border border-[var(--app-border)] bg-black/5 px-4 py-3 text-sm">
-                                {locationHint}
+                    {locationHint ? (
+                        <div className="mt-2 rounded-2xl border border-[var(--app-border)] bg-black/5 px-4 py-2 text-sm">
+                            {locationHint}
+                        </div>
+                    ) : null}
+
+                    <div className="mt-2.5 sm:mt-3">
+                        <PromoBannerSlider />
+                    </div>
+
+                    <div className="mt-4 space-y-4 sm:mt-5 sm:space-y-6">
+                        <PopularCategories
+                            items={catalogData?.items || []}
+                            selectedCategory={selectedCategory}
+                            onSelectCategory={setSelectedCategory}
+                        />
+
+                        {!search.trim() && !selectedCategory && (
+                            <NearbyRestaurantsSection
+                                activeAddress={activeAddress}
+                                onOpenAddressModal={() => setIsAddressModalOpen(true)}
+                                onSelectRestaurant={(rest) => {
+                                    setRestaurantContext({
+                                        id: rest.id,
+                                        name: rest.name,
+                                        slug: rest.slug,
+                                        logo: rest.logoUrl || null,
+                                        tableNo: null,
+                                    });
+                                }}
+                            />
+                        )}
+
+                        {isTobaccoSearch && (
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                    {TOBACCO_QUICK_TAGS.map((tag) => (
+                                        <button
+                                            key={tag}
+                                            type="button"
+                                            onClick={() => setSearch(tag)}
+                                            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-rose-200/60 bg-[#fff5f5] dark:bg-zinc-900 dark:border-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-900 dark:text-zinc-200 transition hover:bg-rose-100/70 active:scale-95 shadow-2xs"
+                                        >
+                                            <span className="text-xs">🚬</span>
+                                            <span>{tag}</span>
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {search.trim() && (
+                                    <h2 className="text-base font-extrabold tracking-tight text-[color:var(--app-text)] sm:text-lg">
+                                        Showing results for "{search}"
+                                    </h2>
+                                )}
+
+                                <TobaccoBanner
+                                    onViewItems={handleViewTobaccoItems}
+                                    className="mb-2"
+                                />
                             </div>
-                        ) : null}
+                        )}
 
                         {backendState === "checking" ? (
                             <InitialBrowseLoadingCard />
@@ -328,7 +502,7 @@ export default function RestaurantChooser() {
                                     </div>
                                 ) : null}
 
-                                {visibleItems.length === 0 && !catalogLoading ? (
+                                {visibleItems.length === 0 && !catalogLoading && !isTobaccoSearch ? (
                                     <div className="py-8 text-center">
                                         <h2 className="text-lg font-bold">No matches found</h2>
                                         <p className="theme-muted mt-2 text-sm">
@@ -338,72 +512,43 @@ export default function RestaurantChooser() {
                                 ) : null}
 
                                 <div className="space-y-2.5">
-                                    <div className="space-y-3">
+                                    <div className="space-y-4">
                                         {itemSections.map((section) => (
-                                            <div key={section.key} className="space-y-1">
-                                                <div className="flex items-end justify-between gap-1">
-                                                    <div>
-                                                        <p className="theme-muted text-[9px] font-semibold uppercase tracking-[0.2em] sm:text-[10px]">
-                                                            {section.label}
-                                                        </p>
-                                                        <h3 className="mt-0.5 text-[12px] font-bold sm:text-[13px]">
-                                                            {section.items.length} {section.items.length === 1 ? "item" : "items"}
-                                                        </h3>
-                                                    </div>
-                                                </div>
-
-                                                <div className="snap-x snap-mandatory overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                                                    <div className="flex w-max gap-2 pr-1 sm:gap-2.5">
-                                                        {section.items.map((item) => {
-                                                            const cartItem = cart.find((c) => c.id === item.id);
-                                                            const qty = cartItem ? cartItem.quantity : 0;
-                                                            return (
-                                                                <SearchItemCard
-                                                                    key={item.id}
-                                                                    item={item}
-                                                                    selected={selectedItem?.id === item.id}
-                                                                    quantity={qty}
-                                                                    onToggleDetails={(event) => {
-                                                                        const isSame = selectedItem?.id === item.id;
-                                                                        if (isSame) {
-                                                                            closeItemDetails();
-                                                                            return;
-                                                                        }
-
-                                                                        const rect = event?.currentTarget?.getBoundingClientRect?.();
-                                                                        const popupWidth = 250;
-                                                                        const popupHeight = 215;
-                                                                        const gap = 10;
-                                                                        const viewportWidth = window.innerWidth;
-                                                                        const viewportHeight = window.innerHeight;
-                                                                        const left = rect
-                                                                            ? Math.max(12, Math.min(rect.left, viewportWidth - popupWidth - 12))
-                                                                            : Math.max(12, (viewportWidth - popupWidth) / 2);
-                                                                        let top = rect ? rect.bottom + gap : Math.max(12, (viewportHeight - popupHeight) / 2);
-                                                                        if (top + popupHeight > viewportHeight - 12) {
-                                                                            top = rect ? Math.max(12, rect.top - popupHeight - gap) : top;
-                                                                        }
-
-                                                                        setSelectedItem(item);
-                                                                        setPopupAnchor({ left, top });
-                                                                    }}
-                                                                    onClick={() => addItemToCart(item)}
-                                                                />
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            </div>
+                                            <ItemSectionRow
+                                                key={section.key}
+                                                section={section}
+                                                cart={cart}
+                                                selectedItem={selectedItem}
+                                                closeItemDetails={closeItemDetails}
+                                                setSelectedItem={setSelectedItem}
+                                                setPopupAnchor={setPopupAnchor}
+                                                addItemToCart={addItemToCart}
+                                                favoriteKeySet={favoriteKeySet}
+                                                onToggleFavorite={handleToggleFavorite}
+                                            />
                                         ))}
                                     </div>
                                 </div>
                             </>
                         )}
+                        <PlatformCapabilitiesSection />
                     </div>
                 </section>
             </div>
 
-            {selectedItem ? <ItemDetailsPopup item={selectedItem} anchor={popupAnchor} onClose={closeItemDetails} /> : null}
+            {selectedItem ? (
+                <ItemDetailsPopup
+                    item={selectedItem}
+                    anchor={popupAnchor}
+                    onClose={closeItemDetails}
+                    isFavorite={Boolean(
+                        favoriteKeySet?.has?.(
+                            `${String(selectedItem?.restaurant?.slug || selectedItem?.restaurantSlug || "").trim()}:${Number(selectedItem?.id || 0)}`
+                        )
+                    )}
+                    onToggleFavorite={handleToggleFavorite}
+                />
+            ) : null}
 
             {cartItemCount > 0 ? (
                 <button
@@ -424,13 +569,136 @@ export default function RestaurantChooser() {
 
             <CartDrawer open={cartOpen} setOpen={setCartOpen} />
 
+            <CustomerAddressModal
+                isOpen={isAddressModalOpen}
+                onClose={() => setIsAddressModalOpen(false)}
+                activeAddress={activeAddress}
+                onSelectAddress={(addr) => {
+                    setActiveAddress(addr);
+                    setStoredActiveAddress(addr);
+                }}
+            />
+
+            <TobaccoAgeVerificationModal
+                isOpen={showAgeModal}
+                onConfirm={handleAgeConfirm}
+                onCancel={handleAgeCancel}
+            />
+
             <Footer />
         </div>
     );
 }
 
-function SearchItemCard({ item, onClick, onToggleDetails, selected, quantity = 0 }) {
-    const imageSrc = resolveImageUrl(item?.image) || FALLBACK_IMAGE;
+function ItemSectionRow({
+    section,
+    selectedItem,
+    cart,
+    closeItemDetails,
+    setSelectedItem,
+    setPopupAnchor,
+    addItemToCart,
+    favoriteKeySet,
+    onToggleFavorite,
+}) {
+    const scrollRef = useRef(null);
+    const [canScrollLeft, setCanScrollLeft] = useState(false);
+    const [canScrollRight, setCanScrollRight] = useState(true);
+
+    const checkScroll = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        setCanScrollLeft(el.scrollLeft > 5);
+        setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 5);
+    }, []);
+
+    useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        checkScroll();
+        el.addEventListener("scroll", checkScroll, { passive: true });
+        window.addEventListener("resize", checkScroll);
+        return () => {
+            el.removeEventListener("scroll", checkScroll);
+            window.removeEventListener("resize", checkScroll);
+        };
+    }, [checkScroll, section.items]);
+
+    const handleScroll = (direction) => {
+        if (!scrollRef.current) return;
+        const scrollAmount = direction === "left" ? -360 : 360;
+        scrollRef.current.scrollBy({ left: scrollAmount, behavior: "smooth" });
+    };
+
+    return (
+        <div className="space-y-2">
+            <div className="flex items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2">
+                    <h2 className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-[#ff8a1f]">
+                        {section.label}
+                    </h2>
+                    <span className="text-[11px] font-medium text-[#7c5a45]">
+                        {section.items.length} {section.items.length === 1 ? "item" : "items"}
+                    </span>
+                </div>
+            </div>
+
+            <div className="relative group/section-row">
+                {canScrollLeft && (
+                    <button
+                        type="button"
+                        onClick={() => handleScroll("left")}
+                        aria-label={`Scroll ${section.label} left`}
+                        className="absolute -left-2 top-1/2 -translate-y-1/2 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--app-border)]/50 bg-white/95 text-[#2c160c] shadow-sm transition duration-200 hover:scale-110 hover:border-[#ff8a1f] hover:text-[#ff8a1f] active:scale-95 sm:-left-3 sm:h-8 sm:w-8"
+                    >
+                        <ChevronLeft size={16} />
+                    </button>
+                )}
+
+                <div
+                    ref={scrollRef}
+                    className="snap-x snap-mandatory overflow-x-auto scroll-smooth pb-2 pt-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                >
+                    <div className="flex w-max gap-3 sm:gap-4 pr-2">
+                        {section.items.map((item) => {
+                            const cartItem = cart.find((c) => c.id === item.id);
+                            const qty = cartItem ? cartItem.quantity : 0;
+                            const slug = String(item?.restaurant?.slug || item?.restaurantSlug || "").trim();
+                            const isFav = Boolean(slug && item?.id && favoriteKeySet?.has?.(`${slug}:${Number(item.id)}`));
+                            return (
+                                <SearchItemCard
+                                    key={item.id}
+                                    item={item}
+                                    selected={selectedItem?.id === item.id}
+                                    quantity={qty}
+                                    isFavorite={isFav}
+                                    onToggleFavorite={onToggleFavorite}
+                                    onClick={() => addItemToCart(item)}
+                                />
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {canScrollRight && (
+                    <button
+                        type="button"
+                        onClick={() => handleScroll("right")}
+                        aria-label={`Scroll ${section.label} right`}
+                        className="absolute -right-2 top-1/2 -translate-y-1/2 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--app-border)]/50 bg-white/95 text-[#2c160c] shadow-sm transition duration-200 hover:scale-110 hover:border-[#ff8a1f] hover:text-[#ff8a1f] active:scale-95 sm:-right-3 sm:h-8 sm:w-8"
+                    >
+                        <ChevronRight size={16} />
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function SearchItemCard({ item, onClick, onToggleDetails, selected, quantity = 0, isFavorite = false, onToggleFavorite }) {
+    const rawImage = getItemImageUrl(item);
+    const imageSrc = rawImage || FALLBACK_IMAGE;
+    const rawDescription = String(item?.description || "").trim();
 
     return (
         <div
@@ -443,55 +711,69 @@ function SearchItemCard({ item, onClick, onToggleDetails, selected, quantity = 0
                     onClick?.();
                 }
             }}
-            className={`chooser-item-card group flex w-[115px] shrink-0 snap-start flex-col overflow-hidden rounded-[14px] border text-left shadow-[0_10px_24px_rgba(0,0,0,0.12)] transition duration-300 hover:-translate-y-0.5 sm:w-[124px] md:w-[132px] lg:w-[140px] ${
-                quantity > 0
-                    ? "border-emerald-500/35 bg-[linear-gradient(180deg,rgba(16,185,129,0.12)_0%,rgba(16,185,129,0.04)_100%)] shadow-[0_10px_24px_rgba(16,185,129,0.18)]"
-                    : "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04)_0%,rgba(255,255,255,0.02)_100%)] hover:border-white/15 hover:bg-white/6"
-            }`}
+            className="group flex w-[130px] sm:w-[140px] md:w-[150px] shrink-0 snap-start flex-col text-left transition duration-200 cursor-pointer"
         >
-            <div className="relative aspect-[17/10] overflow-hidden bg-white/5">
-                <img
-                    src={imageSrc}
-                    alt={item?.name || "Menu item"}
-                    className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                    loading="lazy"
-                />
-                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0)_35%,rgba(0,0,0,0.35)_100%)]" />
-            </div>
+            {/* Food Image with subtle radius, Carousel for multiple images, and Favorite Heart Button */}
+            <ItemImageCarousel
+                item={item}
+                alt={item?.name || "Menu item"}
+                imageClassName="group-hover:scale-105"
+            >
+                {/* Favorite Heart Button in top-right corner of image */}
+                <button
+                    type="button"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        event.preventDefault();
+                        onToggleFavorite?.(item);
+                    }}
+                    aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                    title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                    className={`absolute right-1 top-1 z-10 flex h-5 w-5 sm:h-5.5 sm:w-5.5 items-center justify-center rounded-full border shadow-xs transition duration-200 active:scale-90 ${
+                        isFavorite
+                            ? "border-[#ff8a1f]/60 bg-white text-[#ff8a1f] hover:bg-orange-50 shadow-orange-500/20"
+                            : "border-black/10 bg-white/90 text-[#2c160c] backdrop-blur-xs hover:border-[#ff8a1f]/40 hover:bg-white hover:text-[#ff8a1f]"
+                    }`}
+                >
+                    <Heart
+                        size={11}
+                        className={isFavorite ? "fill-[#ff8a1f] text-[#ff8a1f]" : "fill-none text-current"}
+                        strokeWidth={2.2}
+                    />
+                </button>
+            </ItemImageCarousel>
 
-            <div className="flex min-h-[72px] min-w-0 flex-1 flex-col p-1.5 sm:p-2">
-                <div className="flex items-start justify-between gap-1">
-                    <h3 className="min-w-0 flex-1 truncate text-[11px] font-bold sm:text-[12px]">{item?.name}</h3>
-                    <button
-                        type="button"
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onToggleDetails?.(event);
-                        }}
-                        aria-label={selected ? "Hide item details" : "Show item details"}
-                        className={`mt-0.5 inline-flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full border transition ${
-                            selected
-                                ? "border-[color:var(--app-primary)] bg-[color:var(--app-primary)] text-[color:var(--app-primary-text)]"
-                                : "border-white/15 bg-black/35 text-white/85"
-                        }`}
-                    >
-                        <Dot size={12} strokeWidth={3.5} />
-                    </button>
-                </div>
-                <p className="theme-muted mt-[0.5px] truncate text-[8.5px] sm:text-[9.5px]">{item?.restaurant?.name || "Restaurant"}</p>
+            {/* Item Info: Name, Restaurant, Description, Price */}
+            <div className="flex flex-1 flex-col pt-1.5 min-w-0">
+                <h3 className="truncate text-[11.5px] sm:text-[12.5px] font-bold text-[#2c160c] group-hover:text-[#ff8a1f] transition-colors leading-tight">
+                    {item?.name}
+                </h3>
+                <p className="mt-0.5 truncate text-[9.5px] sm:text-[10px] text-[#7c5a45]">
+                    {item?.restaurant?.name || "Restaurant"}
+                </p>
 
-                <div className="mt-auto flex items-end justify-between gap-1 pt-1.5">
-                    <div className="flex min-w-0 flex-wrap items-center gap-1">
-                        <span className="text-[9.5px] font-semibold text-[color:var(--app-accent)] sm:text-[10.5px]">Rs {Math.round(Number(item?.price || 0))}</span>
-                    </div>
+                {/* Real item description with subtle 2-line clamp */}
+                <p className="mt-1 line-clamp-2 text-[10px] sm:text-[10.5px] leading-tight text-[#7c5a45]/85 min-h-[2.1em]">
+                    {rawDescription ? (
+                        rawDescription
+                    ) : (
+                        <span className="italic text-[#7c5a45]/50 text-[9.5px]">No description available</span>
+                    )}
+                </p>
+
+                {/* Price and Add button */}
+                <div className="mt-1.5 flex items-center justify-between gap-1 pt-1 border-t border-[color:var(--app-border)]/20">
+                    <span className="text-xs sm:text-[13px] font-bold text-[#ff8a1f]">
+                        ₹{Math.round(Number(item?.price || 0))}
+                    </span>
 
                     {quantity > 0 ? (
-                        <span className="inline-flex h-5 px-1.5 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/20 text-emerald-400 text-[9.5px] font-bold">
+                        <span className="inline-flex h-5 px-1.5 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-600 text-[9.5px] font-bold">
                             {quantity}
                         </span>
                     ) : (
-                        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--app-border)] bg-white/5 text-[color:var(--app-accent)]">
-                            <ChevronRight size={10} />
+                        <span className="inline-flex h-5 w-5 sm:h-5.5 sm:w-5.5 shrink-0 items-center justify-center rounded-full border border-[#ff8a1f]/30 bg-orange-500/10 text-[#ff8a1f] transition group-hover:bg-[#ff8a1f] group-hover:text-white">
+                            <Plus size={11} strokeWidth={2.5} />
                         </span>
                     )}
                 </div>
@@ -500,28 +782,54 @@ function SearchItemCard({ item, onClick, onToggleDetails, selected, quantity = 0
     );
 }
 
-function ItemDetailsPopup({ item, anchor, onClose }) {
-    const imageSrc = resolveImageUrl(item?.image) || FALLBACK_IMAGE;
+function ItemDetailsPopup({ item, anchor, onClose, isFavorite = false, onToggleFavorite }) {
+    const rawImage = getItemImageUrl(item);
+    const imageSrc = rawImage || FALLBACK_IMAGE;
     const placeText = [item?.restaurant?.city, item?.restaurant?.state].filter(Boolean).join(", ");
     const orderCount = Number(item?.orderCount || 0);
     const popupStyle = anchor ? { left: `${anchor.left}px`, top: `${anchor.top}px` } : undefined;
     const restaurantPath = buildRestaurantMenuPath(String(item?.restaurant?.slug || "").trim(), "");
+    const rawDescription = String(item?.description || "").trim();
 
     return (
         <div className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[2px]" onClick={onClose}>
             <div
                 style={popupStyle}
-                className="fixed w-[250px] max-w-[calc(100vw-24px)] overflow-hidden rounded-[18px] border border-white/10 bg-[color:var(--app-surface)] shadow-[0_22px_56px_rgba(0,0,0,0.34)]"
+                className="fixed w-[260px] max-w-[calc(100vw-24px)] overflow-hidden rounded-[18px] border border-white/10 bg-[color:var(--app-surface)] shadow-[0_22px_56px_rgba(0,0,0,0.34)]"
                 onClick={(event) => event.stopPropagation()}
             >
-                <div className="relative aspect-[16/10] overflow-hidden">
-                    <img src={imageSrc} alt={item?.name || "Menu item"} className="h-full w-full object-cover" />
-                </div>
+                <ItemImageCarousel
+                    item={item}
+                    alt={item?.name || "Menu item"}
+                    aspectRatio="aspect-[16/10]"
+                >
+                    <button
+                        type="button"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            event.preventDefault();
+                            onToggleFavorite?.(item);
+                        }}
+                        aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                        title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+                        className={`absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border shadow-xs transition duration-200 active:scale-90 ${
+                            isFavorite
+                                ? "border-[#ff8a1f]/60 bg-white text-[#ff8a1f] hover:bg-orange-50 shadow-orange-500/20"
+                                : "border-black/10 bg-white/90 text-[#2c160c] backdrop-blur-xs hover:border-[#ff8a1f]/40 hover:bg-white hover:text-[#ff8a1f]"
+                        }`}
+                    >
+                        <Heart
+                            size={13}
+                            className={isFavorite ? "fill-[#ff8a1f] text-[#ff8a1f]" : "fill-none text-current"}
+                            strokeWidth={2.2}
+                        />
+                    </button>
+                </ItemImageCarousel>
 
                 <div className="space-y-2.5 p-3.5">
                     <div className="flex items-start justify-between gap-2.5">
                         <div className="min-w-0">
-                            <h3 className="truncate text-[15px] font-bold leading-tight">{item?.name}</h3>
+                            <h3 className="truncate text-[15px] font-bold leading-tight text-[#2c160c]">{item?.name}</h3>
                             {restaurantPath ? (
                                 <Link
                                     to={restaurantPath}
@@ -545,9 +853,18 @@ function ItemDetailsPopup({ item, anchor, onClose }) {
                     </div>
 
                     <div className="space-y-1.5 rounded-[14px] border border-white/8 bg-white/4 px-3 py-2.5 text-[12px]">
+                        {rawDescription ? (
+                            <p className="text-[12px] text-[#2c160c] leading-snug">
+                                {rawDescription}
+                            </p>
+                        ) : (
+                            <p className="text-[11px] italic text-[#7c5a45]/60">
+                                No description available
+                            </p>
+                        )}
                         {placeText ? <p className="theme-muted">{placeText}</p> : null}
                         <p className="theme-muted">{orderCount.toLocaleString("en-IN")} orders</p>
-                        <p className="font-semibold text-[color:var(--app-accent)]">Rs {Math.round(Number(item?.price || 0))}</p>
+                        <p className="font-semibold text-[#ff8a1f]">₹{Math.round(Number(item?.price || 0))}</p>
                     </div>
                 </div>
             </div>
@@ -651,3 +968,99 @@ function InitialBrowseLoadingCard() {
         </div>
     );
 }
+
+function PlatformCapabilitiesSection() {
+    const [showFeatures, setShowFeatures] = useState(false);
+
+    const capabilities = [
+        {
+            icon: <ShoppingBag className="h-6 w-6 text-[#ff8a1f]" />,
+            title: "Online Ordering",
+            description: "Seamless customer food ordering experience for takeaway, delivery, and online digital menus.",
+        },
+        {
+            icon: <Store className="h-6 w-6 text-[#ff8a1f]" />,
+            title: "Restaurant Operations",
+            description: "Complete back-office management, staff role permissions, and restaurant configuration.",
+        },
+        {
+            icon: <QrCode className="h-6 w-6 text-[#ff8a1f]" />,
+            title: "QR Table Ordering",
+            description: "Instant, contactless ordering from dining tables with table-specific digital menus.",
+        },
+        {
+            icon: <ChefHat className="h-6 w-6 text-[#ff8a1f]" />,
+            title: "Live Kitchen Orders",
+            description: "Real-time kitchen order tickets (KOT), status dispatch, and chef boards for fast execution.",
+        },
+        {
+            icon: <Receipt className="h-6 w-6 text-[#ff8a1f]" />,
+            title: "Billing & Payments",
+            description: "Integrated POS billing desk with digital payment gateways and automated settlements.",
+        },
+        {
+            icon: <BarChart3 className="h-6 w-6 text-[#ff8a1f]" />,
+            title: "Analytics & Insights",
+            description: "Real-time sales reporting, revenue metrics, dish popularities, and performance tracking.",
+        },
+        {
+            icon: <Truck className="h-6 w-6 text-[#ff8a1f]" />,
+            title: "Supply Chain Management",
+            description: "B2B ingredient marketplace, supplier connectivity, and automated stock & inventory controls.",
+        },
+    ];
+
+    return (
+        <section className="mt-12 space-y-6">
+            <div className="rounded-[24px] border border-[var(--app-border)] bg-[color:color-mix(in_srgb,var(--app-surface-alpha,var(--app-bg))_92%,#000_8%)] p-6 sm:p-8">
+                <div className="max-w-3xl">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#ff8a1f]/10 border border-[#ff8a1f]/30 px-3.5 py-1 text-[11px] font-bold uppercase tracking-wider text-[#ff8a1f]">
+                        Smart QR Restaurant Ordering System
+                    </span>
+                    <h2 className="mt-3 text-2xl font-black tracking-tight text-[color:var(--app-text)] sm:text-3xl">
+                        Tiffzy — Smart QR Restaurant Ordering System &amp; Food Business Platform
+                    </h2>
+                    <p className="mt-2 text-sm leading-relaxed text-[color:var(--app-muted)] sm:text-base">
+                        Tiffzy is a connected Food Business Platform powering online ordering, restaurant operations, QR table ordering, live kitchen orders, billing &amp; payments, analytics, and supply chain management.
+                    </p>
+                    <div className="mt-4">
+                        <button
+                            onClick={() => setShowFeatures(!showFeatures)}
+                            className="inline-flex items-center gap-2 rounded-xl bg-[#ff8a1f]/10 border border-[#ff8a1f]/30 px-4 py-2 text-xs font-bold text-[#ff8a1f] hover:bg-[#ff8a1f]/20 transition"
+                        >
+                            {showFeatures ? (
+                                <>
+                                    <span>Hide Features</span>
+                                    <ChevronUp size={16} />
+                                </>
+                            ) : (
+                                <>
+                                    <span>See More Features</span>
+                                    <ChevronDown size={16} />
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {showFeatures && (
+                    <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {capabilities.map((cap) => (
+                            <div
+                                key={cap.title}
+                                className="rounded-2xl border border-[var(--app-border)] bg-[color:var(--app-surface)] p-5 shadow-sm transition hover:border-[#ff8a1f]/40"
+                            >
+                                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#ff8a1f]/10">
+                                    {cap.icon}
+                                </div>
+                                <h3 className="mt-4 text-base font-bold text-[color:var(--app-text)]">{cap.title}</h3>
+                                <p className="mt-1.5 text-xs leading-relaxed text-[color:var(--app-muted)]">{cap.description}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </section>
+    );
+}
+

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cachedGet, makeGetCacheKey } from "../utils/apiClient";
 import { getCacheEntry, isStaleAllowed, subscribeCache } from "../utils/localCache";
 
@@ -25,21 +25,58 @@ export default function useCachedGet(
     });
     const [loading, setLoading] = useState(Boolean(enabled && data === null));
     const [error, setError] = useState("");
+    const [errorStatus, setErrorStatus] = useState(null);
 
-    const refresh = useCallback(async ({ force = false } = {}) => {
-        if (!enabled) return null;
-        try {
-            setLoading(true);
+    const inFlightPromiseRef = useRef(null);
+    const inFlightKeyRef = useRef(null);
+
+    // Sync state when cache key changes (e.g. from customer:session to customer:phone)
+    useEffect(() => {
+        const cached = getCacheEntry(key);
+        if (cached && isStaleAllowed(cached)) {
+            setData(cached.data);
             setError("");
-            const next = await cachedGet(url, { params, ttlMs, staleMs, scope, cacheKey: key, force });
-            setData(next);
-            return next;
-        } catch (err) {
-            setError(err?.response?.data?.message || err?.message || "Request failed");
-            return null;
-        } finally {
-            setLoading(false);
+            setErrorStatus(null);
+        } else {
+            setError("");
+            setErrorStatus(null);
         }
+    }, [key]);
+
+    const refresh = useCallback(({ force = false } = {}) => {
+        if (!enabled) return Promise.resolve(null);
+        if (inFlightPromiseRef.current && inFlightKeyRef.current === key) {
+            return inFlightPromiseRef.current;
+        }
+
+        const run = async () => {
+            try {
+                setLoading(true);
+                setError("");
+                setErrorStatus(null);
+                const next = await cachedGet(url, { params, ttlMs, staleMs, scope, cacheKey: key, force });
+                setData(next);
+                setError("");
+                setErrorStatus(null);
+                return next;
+            } catch (err) {
+                const status = err?.response?.status ?? (err?.code === "ERR_NETWORK" || !err?.response ? 0 : null);
+                setErrorStatus(status);
+                setError(err?.response?.data?.message || err?.message || "Request failed");
+                return null;
+            } finally {
+                setLoading(false);
+                if (inFlightKeyRef.current === key) {
+                    inFlightPromiseRef.current = null;
+                    inFlightKeyRef.current = null;
+                }
+            }
+        };
+
+        const promise = run();
+        inFlightPromiseRef.current = promise;
+        inFlightKeyRef.current = key;
+        return promise;
     }, [enabled, key, paramsKey, scope, staleMs, ttlMs, url]);
 
     useEffect(() => {
@@ -48,7 +85,10 @@ export default function useCachedGet(
         // Keep component in sync with cache updates (including background revalidation).
         return subscribeCache(key, (nextData) => {
             setData(nextData);
-            if (nextData === null) {
+            if (nextData !== null && nextData !== undefined) {
+                setError("");
+                setErrorStatus(null);
+            } else if (nextData === null) {
                 // Cache was deleted/invalidated; re-fetch.
                 refresh({ force: true });
             }
@@ -60,5 +100,6 @@ export default function useCachedGet(
         refresh();
     }, [enabled, key, refresh]);
 
-    return { data, loading, error, refresh, cacheKey: key };
+    return { data, loading, error, errorStatus, refresh, cacheKey: key };
 }
+

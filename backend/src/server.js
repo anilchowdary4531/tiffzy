@@ -15,11 +15,21 @@ import { requireStaffJwt } from "./services/staffAuthService.js";
 import { getStorageInfo } from "./services/storageService.js";
 
 const nodeEnv = String(process.env.NODE_ENV || "development").trim() || "development";
-const envFileName = nodeEnv === "production" ? ".env.production" : ".env";
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const envPath = path.join(backendRoot, envFileName);
-if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
+
+// Load environment files in cascading order (.env.nodeEnv.local -> .env.nodeEnv -> .env.local -> .env)
+const envFiles = [
+  `.env.${nodeEnv}.local`,
+  `.env.${nodeEnv}`,
+  ".env.local",
+  ".env",
+];
+
+for (const file of envFiles) {
+  const p = path.join(backendRoot, file);
+  if (fs.existsSync(p)) {
+    dotenv.config({ path: p });
+  }
 }
 
 const app = Fastify({ logger: true });
@@ -43,17 +53,58 @@ if (runtime.NODE_ENV === "production" && process.env.VALIDATE_BOOT !== "1") {
   }
 }
 
-const STAFF_ACCESS_MODULES = ["dashboard", "orders", "menu", "tables", "kitchen", "analytics", "finance", "staff", "settings", "notifications"];
-const STAFF_ALLOWED_ROLES = ["OWNER", "MANAGER", "WAITER", "CHEF", "CASHIER", "STAFF"];
+const STAFF_ACCESS_MODULES = [
+  "dashboard",
+  "billing",
+  "orders",
+  "menu",
+  "inventory",
+  "tables",
+  "kitchen",
+  "printers",
+  "analytics",
+  "reports",
+  "paylater",
+  "shifts",
+  "supply",
+  "delivery",
+  "delivery_partners",
+  "customers",
+  "discounts",
+  "loyalty",
+  "staff",
+  "settings",
+  "notifications",
+];
+const STAFF_ALLOWED_ROLES = ["OWNER", "MANAGER", "WAITER", "SERVER", "CHEF", "CASHIER", "STEWARD", "CLEANER", "SWIPER", "STAFF"];
 
 const defaultAccessByRole = (role) => {
   const normalizedRole = String(role || "STAFF").toUpperCase();
   if (normalizedRole === "OWNER") return STAFF_ACCESS_MODULES.reduce((acc, key) => ({ ...acc, [key]: true }), {});
-  if (normalizedRole === "MANAGER") return { dashboard: true, orders: true, menu: true, tables: true, kitchen: true, analytics: true, finance: false, staff: false, settings: false, notifications: true };
-  if (normalizedRole === "CHEF") return { dashboard: true, orders: true, menu: false, tables: false, kitchen: true, analytics: false, finance: false, staff: false, settings: false, notifications: true };
-  if (normalizedRole === "WAITER") return { dashboard: true, orders: true, menu: true, tables: true, kitchen: false, analytics: false, finance: false, staff: false, settings: false, notifications: true };
-  if (normalizedRole === "CASHIER") return { dashboard: true, orders: true, menu: false, tables: false, kitchen: false, analytics: true, finance: true, staff: false, settings: false, notifications: true };
-  return { dashboard: true, orders: false, menu: false, tables: false, kitchen: false, analytics: false, finance: false, staff: false, settings: false, notifications: true };
+  if (normalizedRole === "MANAGER") return {
+    dashboard: true, billing: true, orders: true, menu: true, inventory: true, tables: true, kitchen: true, printers: true, analytics: true, reports: true, paylater: true, shifts: true, supply: true, delivery: true, delivery_partners: true, customers: true, discounts: true, loyalty: true, staff: false, settings: false, notifications: true
+  };
+  if (normalizedRole === "CHEF") return {
+    dashboard: true, billing: false, orders: true, menu: false, inventory: true, tables: false, kitchen: true, printers: true, analytics: false, reports: false, paylater: false, shifts: false, supply: false, delivery: false, delivery_partners: false, customers: false, discounts: false, loyalty: false, staff: false, settings: false, notifications: true
+  };
+  if (normalizedRole === "WAITER" || normalizedRole === "SERVER") return {
+    dashboard: true, billing: true, orders: true, menu: true, inventory: false, tables: true, kitchen: false, printers: false, analytics: false, reports: false, paylater: false, shifts: false, supply: false, delivery: false, delivery_partners: false, customers: false, discounts: false, loyalty: false, staff: false, settings: false, notifications: true
+  };
+  if (normalizedRole === "CASHIER") return {
+    dashboard: true, billing: true, orders: true, menu: false, inventory: false, tables: true, kitchen: false, printers: true, analytics: true, reports: true, paylater: true, shifts: true, supply: false, delivery: false, delivery_partners: false, customers: true, discounts: false, loyalty: true, staff: false, settings: false, notifications: true
+  };
+  if (normalizedRole === "STEWARD") return {
+    dashboard: true, billing: false, orders: false, menu: false, inventory: false, tables: true, kitchen: false, printers: false, analytics: false, reports: false, paylater: false, shifts: false, supply: false, delivery: false, delivery_partners: false, customers: false, discounts: false, loyalty: false, staff: false, settings: false, notifications: true
+  };
+  if (normalizedRole === "CLEANER") return {
+    dashboard: true, billing: false, orders: false, menu: false, inventory: false, tables: true, kitchen: false, printers: false, analytics: false, reports: false, paylater: false, shifts: false, supply: false, delivery: false, delivery_partners: false, customers: false, discounts: false, loyalty: false, staff: false, settings: false, notifications: true
+  };
+  if (normalizedRole === "SWIPER") return {
+    dashboard: true, billing: true, orders: false, menu: false, inventory: false, tables: true, kitchen: false, printers: true, analytics: false, reports: false, paylater: false, shifts: false, supply: false, delivery: false, delivery_partners: false, customers: false, discounts: false, loyalty: false, staff: false, settings: false, notifications: true
+  };
+  return {
+    dashboard: true, billing: false, orders: false, menu: false, inventory: false, tables: false, kitchen: false, printers: false, analytics: false, reports: false, paylater: false, shifts: false, supply: false, delivery: false, delivery_partners: false, customers: false, discounts: false, loyalty: false, staff: false, settings: false, notifications: true
+  };
 };
 
 const normalizeAccess = (rawAccess, role) => {
@@ -246,6 +297,8 @@ await app.register(cors, {
     cb(new Error("Origin not allowed by CORS"), false);
   },
   credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
 });
 
 await app.register(jwt, { secret: JWT_SECRET });
@@ -274,10 +327,52 @@ await app.register(fastifyStatic, {
   decorateReply: false,
 });
 
+const OWNER_MANAGEMENT_ROLES = ["OWNER", "MANAGER", "SUPER_ADMIN"];
+
+const isSensitiveOwnerRoute = (url, method) => {
+  const normalizedUrl = String(url || "").toLowerCase();
+  const normalizedMethod = String(method || "GET").toUpperCase();
+
+  // Staff creation, modification, status, deletion, access
+  if (normalizedUrl.includes("/staff")) {
+    if (normalizedMethod !== "GET") return true;
+  }
+
+  // Finance, expenses, settlements
+  if (
+    normalizedUrl.includes("/finance") ||
+    normalizedUrl.includes("/settlements")
+  ) {
+    return true;
+  }
+
+  // Audit logs (ALL methods)
+  if (normalizedUrl.includes("/audit-logs") || normalizedUrl.includes("/audit")) {
+    return true;
+  }
+
+  // Settings mutations
+  if (normalizedUrl.includes("/settings") && normalizedMethod !== "GET") {
+    return true;
+  }
+
+  // Asset deletion or uploads
+  if (normalizedUrl.includes("/assets") && (normalizedMethod === "DELETE" || normalizedMethod === "POST")) {
+    return true;
+  }
+
+  return false;
+};
+
 const requireOwnerRouteAuth = async (req, reply) => {
+  const routeUrl = String(req.routeOptions?.url || req.raw?.url || req.url || "");
+  const method = String(req.method || "GET").toUpperCase();
+  const isSensitive = isSensitiveOwnerRoute(routeUrl, method);
+  const allowedRoles = isSensitive ? OWNER_MANAGEMENT_ROLES : STAFF_ALLOWED_ROLES;
+
   const actor = await requireStaffJwt(req, reply, {
     prisma,
-    allowedRoles: STAFF_ALLOWED_ROLES,
+    allowedRoles,
     matchRestaurantParam: "restaurantId",
   });
   if (!actor) return reply;
@@ -285,9 +380,13 @@ const requireOwnerRouteAuth = async (req, reply) => {
   return null;
 };
 
+app.addHook("onRequest", async (req) => {
+  req.prisma = prisma;
+});
+
 app.addHook("onRoute", (routeOptions) => {
   const url = String(routeOptions?.url || "");
-  if (!url.startsWith("/owner/")) return;
+  if (!url.startsWith("/owner/") && !url.startsWith("/api/owner/")) return;
   const existing = routeOptions.preHandler ? (Array.isArray(routeOptions.preHandler) ? routeOptions.preHandler : [routeOptions.preHandler]) : [];
   routeOptions.preHandler = [...existing, requireOwnerRouteAuth];
 });

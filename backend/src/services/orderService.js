@@ -1,6 +1,10 @@
-import { computeBill, toPriceSubunitItems } from "./billingService.js";
-import { reserveStockForOrder, restoreStockForOrder } from "./inventoryService.js";
+import { computeBill, calculateBill, toPriceSubunitItems } from "./billingService.js";
+import { reserveStockForOrder, restoreStockForOrder, deductStockForOrder, reverseStockForOrder } from "./inventoryService.js";
 import { normalizePhone } from "./phoneService.js";
+import { createAndDispatchNotification } from "./notificationService.js";
+import { createKotsForOrder, dispatchKotPrint } from "./kotService.js";
+import { validateAndCalculateDiscount, applyAutomaticOffers, incrementPromotionUsageTx } from "./promotionService.js";
+import { validateAndCalculateLoyaltyRedemption, redeemPointsForOrder, earnPointsForOrder, reversePointsForRefund } from "./loyaltyService.js";
 
 const SAFE_STATUSES = ["PLACED", "ACCEPTED", "PREPARING", "READY", "DELIVERED", "CANCELLED"];
 
@@ -94,6 +98,7 @@ export const createOrderByStaff = async ({ prisma, actor, input } = {}) => {
       defaultTaxPercent: true,
       serviceChargeEnabled: true,
       serviceChargePercent: true,
+      billingConfig: true,
     },
   });
   if (!restaurant) {
@@ -109,6 +114,31 @@ export const createOrderByStaff = async ({ prisma, actor, input } = {}) => {
   const phone = body.phone ? normalizePhone(body.phone) : null;
   const email = body.email ? String(body.email).trim().toLowerCase() : null;
   const customerType = body.customerType ? String(body.customerType).trim().toUpperCase() : phone ? "REGISTERED" : "WALK_IN";
+
+  let customerId = body.customerId ? Number(body.customerId) : null;
+  if (!customerId && phone) {
+    try {
+      const custRecord = await prisma.customer.upsert({
+        where: {
+          restaurantId_phone: {
+            restaurantId,
+            phone,
+          },
+        },
+        update: {
+          name: customerName || undefined,
+          email: email || undefined,
+        },
+        create: {
+          restaurantId,
+          name: customerName || null,
+          phone,
+          email: email || null,
+        },
+      });
+      customerId = custRecord.id;
+    } catch (_) {}
+  }
 
   const items = Array.isArray(body.items) ? body.items : [];
   if (!items.length) {
@@ -129,32 +159,127 @@ export const createOrderByStaff = async ({ prisma, actor, input } = {}) => {
         ...(itemNames.length > 0 ? [{ name: { in: itemNames } }] : []),
       ],
     },
-    select: { id: true, name: true, price: true },
+    include: {
+      variants: true,
+      modifierGroups: {
+        include: { modifiers: true },
+      },
+    },
   });
 
   if (!menuItems.length) {
     menuItems = await prisma.menuItem.findMany({
       where: { restaurantId, isAvailable: true },
-      select: { id: true, name: true, price: true },
+      include: {
+        variants: true,
+        modifierGroups: {
+          include: { modifiers: true },
+        },
+      },
     });
   }
 
   const normalizedItems = toPriceSubunitItems({ menuItems, items });
+  const subtotalSubunit = normalizedItems.reduce((sum, item) => sum + item.priceSubunit * item.qty, 0);
+  const subtotalFloat = subtotalSubunit / 100;
 
-  const discountSubunit =
-    body.discountSubunit !== undefined
-      ? Number(body.discountSubunit || 0)
-      : body.discountAmount !== undefined
-        ? Math.round(Number(body.discountAmount || 0) * 100)
-        : 0;
-  const bill = computeBill({
+  let appliedPromotionId = body.promotionId ? Number(body.promotionId) : null;
+  let appliedCouponCode = body.couponCode ? String(body.couponCode).trim().toUpperCase() : null;
+  let appliedDiscountType = body.discountType ? String(body.discountType).trim().toUpperCase() : null;
+  let appliedDiscountReason = body.discountReason ? String(body.discountReason).trim() : null;
+  let calculatedDiscountSubunit = 0;
+
+  if (appliedCouponCode || appliedPromotionId) {
+    const promoRes = await validateAndCalculateDiscount({
+      prisma,
+      restaurantId,
+      branchId: actor?.branchId ? Number(actor.branchId) : null,
+      couponCode: appliedCouponCode,
+      promotionId: appliedPromotionId,
+      items: normalizedItems,
+      orderType: String(body.orderType || body.fulfillment || "POS").toUpperCase(),
+      customerId,
+      subtotal: subtotalFloat,
+    });
+
+    if (promoRes.ok) {
+      calculatedDiscountSubunit = promoRes.discountSubunit;
+      appliedPromotionId = promoRes.promotion?.id || appliedPromotionId;
+      appliedCouponCode = promoRes.promotion?.code || appliedCouponCode;
+      appliedDiscountType = promoRes.promotion?.type || appliedDiscountType;
+      appliedDiscountReason = promoRes.promotion?.name || appliedDiscountReason;
+    }
+  } else if (subtotalFloat > 0) {
+    // Try applying automatic offer if no coupon explicitly entered
+    const autoRes = await applyAutomaticOffers({
+      prisma,
+      restaurantId,
+      branchId: actor?.branchId ? Number(actor.branchId) : null,
+      items: normalizedItems,
+      orderType: String(body.orderType || body.fulfillment || "POS").toUpperCase(),
+      customerId,
+      subtotal: subtotalFloat,
+    });
+    if (autoRes && autoRes.ok) {
+      calculatedDiscountSubunit = autoRes.discountSubunit;
+      appliedPromotionId = autoRes.promotion?.id;
+      appliedCouponCode = autoRes.promotion?.code;
+      appliedDiscountType = autoRes.promotion?.type;
+      appliedDiscountReason = autoRes.promotion?.name;
+    }
+  }
+
+  // Fallback to manual discount if supplied and no promotion applied
+  if (calculatedDiscountSubunit === 0) {
+    calculatedDiscountSubunit =
+      body.discountSubunit !== undefined
+        ? Number(body.discountSubunit || 0)
+        : body.discountAmount !== undefined
+          ? Math.round(Number(body.discountAmount || 0) * 100)
+          : 0;
+    if (calculatedDiscountSubunit > 0 && !appliedDiscountType) {
+      appliedDiscountType = "MANUAL";
+      appliedDiscountReason = appliedDiscountReason || "Manual Discount";
+    }
+  }
+
+  // Loyalty Points Redemption Validation
+  let loyaltyPointsToRedeem = Math.max(0, Math.floor(Number(body.loyaltyPointsToRedeem || body.loyaltyPointsRedeemed || 0)));
+  let loyaltyDiscountSubunit = 0;
+  let loyaltyDiscountAmount = 0;
+
+  if (loyaltyPointsToRedeem > 0 && customerId) {
+    const loyaltyVal = await validateAndCalculateLoyaltyRedemption({
+      db: prisma,
+      restaurantId,
+      customerId,
+      pointsToRedeem: loyaltyPointsToRedeem,
+      subtotal: subtotalFloat,
+      hasCoupon: Boolean(appliedCouponCode || appliedPromotionId),
+    });
+
+    if (loyaltyVal.valid) {
+      loyaltyDiscountSubunit = loyaltyVal.discountSubunit;
+      loyaltyDiscountAmount = loyaltyVal.discountAmount;
+      loyaltyPointsToRedeem = loyaltyVal.pointsToRedeem;
+    } else {
+      loyaltyPointsToRedeem = 0;
+    }
+  }
+
+  const resolvedOrderType = body.fulfillment ? String(body.fulfillment).trim().toUpperCase() : (body.orderType ? String(body.orderType).trim().toUpperCase() : (tableNo ? "DINE_IN" : "POS"));
+  const bill = calculateBill({
     items: normalizedItems,
+    orderType: resolvedOrderType,
+    billingConfig: restaurant.billingConfig,
     taxEnabled: Boolean(restaurant.taxEnabled),
     taxType: restaurant.taxType,
     taxPercent: restaurant.defaultTaxPercent,
     serviceChargeEnabled: Boolean(restaurant.serviceChargeEnabled),
     serviceChargePercent: restaurant.serviceChargePercent,
-    discountSubunit,
+    discountSubunit: calculatedDiscountSubunit,
+    loyaltyDiscountSubunit,
+    tip: body.tip,
   });
 
   const invoiceNumber = Number(restaurant.nextInvoiceNumber || 1001);
@@ -173,15 +298,61 @@ export const createOrderByStaff = async ({ prisma, actor, input } = {}) => {
   return prisma.$transaction(async (tx) => {
     await reserveStockForOrder({ tx, restaurantId, items: normalizedItems });
 
+    let inputTableSessionId = body.tableSessionId ? Number(body.tableSessionId) : null;
+    if (!inputTableSessionId && tableNo) {
+      const dTable = await tx.diningTable.findFirst({
+        where: { restaurantId, tableNo: String(tableNo).trim() },
+        select: { id: true, tableNo: true, assignedWaiterId: true, assignedWaiterName: true },
+      });
+      if (dTable) {
+        let activeSession = await tx.tableSession.findFirst({
+          where: {
+            tableId: dTable.id,
+            restaurantId,
+            status: { in: ["OPEN", "BILLING", "PAID"] },
+          },
+        });
+        const resolvedWaiterId = body.waiterId ? Number(body.waiterId) : (dTable.assignedWaiterId || actor?.userId || null);
+        const resolvedWaiterName = body.waiterName || dTable.assignedWaiterName || actor?.userName || null;
+
+        if (!activeSession) {
+          activeSession = await tx.tableSession.create({
+            data: {
+              restaurantId,
+              tableId: dTable.id,
+              tableNo: dTable.tableNo,
+              waiterId: resolvedWaiterId,
+              waiterName: resolvedWaiterName,
+              guestCount: Math.max(1, Number(body.guestCount || 1)),
+              status: "OPEN",
+              openedAt: new Date(),
+            },
+          });
+        } else if (!activeSession.waiterId && resolvedWaiterId) {
+          activeSession = await tx.tableSession.update({
+            where: { id: activeSession.id },
+            data: {
+              waiterId: resolvedWaiterId,
+              waiterName: resolvedWaiterName,
+            },
+          });
+        }
+        inputTableSessionId = activeSession.id;
+      }
+    }
+
     const order = await tx.order.create({
       data: {
         restaurantId,
         branchId,
+        tableSessionId: inputTableSessionId,
         orderNo,
         invoiceNo,
-        orderSource: "POS",
+        orderSource: body.orderSource ? String(body.orderSource).trim().toUpperCase() : "POS",
+        fulfillment: body.fulfillment ? String(body.fulfillment).trim().toUpperCase() : (body.orderType ? String(body.orderType).trim().toUpperCase() : (tableNo ? "DINE_IN" : "POS")),
         createdByRole: createdByRoleFromStaffRole(actor?.role),
         createdByUserId: actor?.userId || null,
+        customerId,
         customerType,
         customerName,
         phone,
@@ -193,6 +364,14 @@ export const createOrderByStaff = async ({ prisma, actor, input } = {}) => {
         serviceChargeAmount: bill.serviceChargeAmount,
         discountAmount: bill.discountAmount,
         total: bill.total,
+        billingSnapshot: bill.snapshot,
+        promotionId: appliedPromotionId,
+        couponCode: appliedCouponCode,
+        discountType: appliedDiscountType,
+        discountReason: appliedDiscountReason,
+        loyaltyPointsRedeemed: loyaltyPointsToRedeem,
+        loyaltyDiscountAmount,
+        loyaltyPointsEarned: 0,
         status: "PLACED",
         paymentStatus: "PENDING",
         items: {
@@ -200,6 +379,11 @@ export const createOrderByStaff = async ({ prisma, actor, input } = {}) => {
             menuItemId: item.menuItemId,
             itemName: item.itemName,
             preparedByName: item.preparedByName || null,
+            variantId: item.variantId || null,
+            variantName: item.variantName || null,
+            variantPrice: item.variantPrice || null,
+            selectedModifiers: item.selectedModifiers || null,
+            notes: item.notes || null,
             qty: item.qty,
             price: item.priceSubunit / 100,
             total: (item.priceSubunit * item.qty) / 100,
@@ -221,10 +405,69 @@ export const createOrderByStaff = async ({ prisma, actor, input } = {}) => {
       },
     });
 
+    // Execute loyalty redemption ledger transaction
+    if (loyaltyPointsToRedeem > 0 && customerId) {
+      await redeemPointsForOrder({
+        db: tx,
+        restaurantId,
+        orderId: order.id,
+        customerId,
+        pointsToRedeem: loyaltyPointsToRedeem,
+        actor,
+      });
+    }
+
+    // Automatic recipe raw material stock deduction
+    await deductStockForOrder({
+      tx,
+      restaurantId,
+      orderId: order.id,
+      orderItems: order.items,
+      actor,
+    });
+
+    // Increment promotion usage count atomically
+    if (appliedPromotionId) {
+      await incrementPromotionUsageTx({ tx, promotionId: appliedPromotionId });
+    }
+
     await tx.restaurant.update({
       where: { id: restaurantId },
       data: { nextInvoiceNumber: { increment: 1 } },
     });
+
+    if (inputTableSessionId) {
+      const sessionOrders = await tx.order.findMany({
+        where: { tableSessionId: inputTableSessionId, status: { not: "CANCELLED" } },
+        select: { subtotal: true, taxAmount: true, serviceChargeAmount: true, discountAmount: true, total: true },
+      });
+
+      const sessionSubtotal = sessionOrders.reduce((sum, o) => sum + Number(o.subtotal || 0), 0);
+      const sessionTax = sessionOrders.reduce((sum, o) => sum + Number(o.taxAmount || 0), 0);
+      const sessionService = sessionOrders.reduce((sum, o) => sum + Number(o.serviceChargeAmount || 0), 0);
+      const sessionDiscount = sessionOrders.reduce((sum, o) => sum + Number(o.discountAmount || 0), 0);
+      const sessionTotal = sessionOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+
+      await tx.tableSession.update({
+        where: { id: inputTableSessionId },
+        data: {
+          subtotal: sessionSubtotal,
+          taxAmount: sessionTax,
+          serviceChargeAmount: sessionService,
+          discountAmount: sessionDiscount,
+          total: sessionTotal,
+        },
+      });
+    }
+
+    const kots = await createKotsForOrder({
+      prisma,
+      tx,
+      order,
+      actor,
+      idempotencyKey: body.idempotencyKey || null,
+    });
+    order.kots = kots;
 
     return order;
   });
@@ -277,6 +520,28 @@ export const updateOrderStatus = async ({ prisma, actor, orderId, nextStatus, no
         restaurantId: order.restaurantId,
         items: (order.items || []).map((i) => ({ menuItemId: i.menuItemId, qty: i.qty })),
       });
+      await reverseStockForOrder({
+        tx,
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        actor,
+      });
+      await reversePointsForRefund({
+        db: tx,
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        refundRatio: 1.0,
+        actor,
+      });
+    }
+
+    if (targetStatus === "DELIVERED") {
+      await earnPointsForOrder({
+        db: tx,
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        actor,
+      });
     }
 
     const updated = await tx.order.update({
@@ -299,6 +564,85 @@ export const updateOrderStatus = async ({ prisma, actor, orderId, nextStatus, no
         statusEvents: { orderBy: { createdAt: "asc" } },
       },
     });
+
+    // Recalculate TableSession totals & check for table release on cancellation
+    if (updated.tableSessionId) {
+      try {
+        const sessionOrders = await tx.order.findMany({
+          where: { tableSessionId: updated.tableSessionId, status: { not: "CANCELLED" } },
+          select: { id: true, subtotal: true, taxAmount: true, serviceChargeAmount: true, discountAmount: true, total: true },
+        });
+
+        const activeOrderCount = sessionOrders.length;
+        const sessionSubtotal = sessionOrders.reduce((sum, o) => sum + Number(o.subtotal || 0), 0);
+        const sessionTax = sessionOrders.reduce((sum, o) => sum + Number(o.taxAmount || 0), 0);
+        const sessionService = sessionOrders.reduce((sum, o) => sum + Number(o.serviceChargeAmount || 0), 0);
+        const sessionDiscount = sessionOrders.reduce((sum, o) => sum + Number(o.discountAmount || 0), 0);
+        const sessionTotal = sessionOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+
+        const sessionUpdateData = {
+          subtotal: sessionSubtotal,
+          taxAmount: sessionTax,
+          serviceChargeAmount: sessionService,
+          discountAmount: sessionDiscount,
+          total: sessionTotal,
+        };
+
+        if (activeOrderCount === 0 && targetStatus === "CANCELLED") {
+          sessionUpdateData.status = "CANCELLED";
+          sessionUpdateData.closedAt = new Date();
+        }
+
+        await tx.tableSession.update({
+          where: { id: updated.tableSessionId },
+          data: sessionUpdateData,
+        });
+      } catch (sessErr) {
+        console.warn("[updateOrderStatus] TableSession sync warning:", sessErr?.message);
+      }
+    }
+
+    // Trigger Notification for Customer on Order Status Change
+    if (updated?.customer?.id) {
+      const statusTypeMap = {
+        ACCEPTED: "ORDER_ACCEPTED",
+        PREPARING: "FOOD_PREPARING",
+        READY: "FOOD_READY",
+        DELIVERED: "ORDER_DELIVERED",
+        CANCELLED: "ORDER_CANCELLED",
+      };
+
+      const notificationType = statusTypeMap[targetStatus];
+      if (notificationType) {
+        const titles = {
+          ACCEPTED: "Order Accepted",
+          PREPARING: "Food Is Being Prepared",
+          READY: "Order Ready!",
+          DELIVERED: "Order Delivered",
+          CANCELLED: "Order Cancelled",
+        };
+        const messages = {
+          ACCEPTED: `Your order #${updated.orderNo || id} has been accepted by the restaurant.`,
+          PREPARING: `The kitchen has started preparing your food for order #${updated.orderNo || id}.`,
+          READY: `Your food for order #${updated.orderNo || id} is ready!`,
+          DELIVERED: `Your order #${updated.orderNo || id} has been delivered. Enjoy your meal!`,
+          CANCELLED: `Your order #${updated.orderNo || id} was cancelled.`,
+        };
+
+        createAndDispatchNotification({
+          prisma,
+          recipientType: "CUSTOMER",
+          recipientId: updated.customer.id,
+          orderId: id,
+          restaurantId: updated.restaurantId,
+          notificationType,
+          title: titles[targetStatus] || `Order ${targetStatus}`,
+          message: messages[targetStatus] || `Order #${updated.orderNo || id} status updated to ${targetStatus}.`,
+          data: { orderId: id, orderNo: updated.orderNo, status: targetStatus, screen: "ORDER_TRACKING" },
+          idempotencyKey: `ORDER_${id}_${targetStatus}`,
+        }).catch(() => {});
+      }
+    }
 
     return updated;
   });

@@ -14,24 +14,14 @@ import {
     Image as ImageIcon,
     ExternalLink,
     Utensils,
+    Power,
     Wallet
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../utils/apiClient";
 
-const SUPER_ADMIN_MENU_ITEMS = [
-    { key: "dashboard", label: "Dashboard Overview", icon: LayoutDashboard, to: "/super-admin" },
-    { key: "restaurants", label: "Restaurant Management", icon: Building2, to: "/super-admin#restaurants-section" },
-    { key: "restaurant-profile", label: "Restaurant Profile Page", icon: Utensils, to: "/super-admin/restaurant-profiles" },
-    { key: "wallets", label: "Customer Wallet Ledger", icon: Wallet, to: "/super-admin/wallets" },
-    { key: "categories", label: "Home Categories", icon: Menu, to: "/super-admin/categories" },
-    { key: "banners", label: "Promotion Banners", icon: ImageIcon, to: "/super-admin/banners" },
-    { key: "users", label: "Customer & Staff Users", icon: Users, to: "/super-admin/users" },
-    { key: "settlements", label: "Cashfree Easy Split", icon: BarChart3, to: "/super-admin/settlements" },
-    { key: "create-restaurant", label: "Create Restaurant", icon: Store, to: "/super-admin/create-restaurant" },
-    { key: "settings", label: "System Settings", icon: Settings, to: "/super-admin/settings" },
-];
+import SuperAdminSidebar from "../../components/super-admin/SuperAdminSidebar";
 
 export default function SuperAdminBanners() {
     const navigate = useNavigate();
@@ -78,43 +68,32 @@ export default function SuperAdminBanners() {
     const handleDelete = async (id) => {
         if (!window.confirm("Delete this banner?")) return;
         try {
+            setError("");
+            setBanners((prev) => prev.filter((b) => b.id !== id));
             await api.delete(`/super-admin/banners/${id}`);
-            loadBanners();
         } catch (err) {
-            setError("Failed to delete banner");
+            console.warn("[SuperAdminBanners] Delete warning:", err);
+            loadBanners();
         }
     };
 
     const toggleStatus = async (banner) => {
         try {
+            setError("");
+            setBanners((prev) => prev.map((b) => (b.id === banner.id ? { ...b, isActive: !b.isActive } : b)));
             await api.patch(`/super-admin/banners/${banner.id}`, { isActive: !banner.isActive });
-            loadBanners();
         } catch (err) {
-            setError("Failed to update status");
+            console.warn("[SuperAdminBanners] Toggle status warning:", err);
+            loadBanners();
         }
     };
 
     return (
         <div className="theme-page min-h-screen">
-            <div className={`fixed inset-0 z-50 transition ${sidebarOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
-                <button onClick={() => setSidebarOpen(false)} className={`absolute inset-0 bg-black/45 transition-opacity ${sidebarOpen ? "opacity-100" : "opacity-0"}`} />
-                <aside className={`theme-panel theme-border absolute left-0 top-0 h-full w-72 max-w-[84vw] border-r p-5 shadow-2xl transition-transform ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-                    <div className="flex items-center justify-between mb-8">
-                        <h2 className="text-xl font-bold text-white">Tiffzy Admin</h2>
-                        <button onClick={() => setSidebarOpen(false)} className="theme-soft-button p-2 rounded-xl text-white"><X size={18} /></button>
-                    </div>
-                    <nav className="grid gap-2">
-                        {SUPER_ADMIN_MENU_ITEMS.map((item) => (
-                            <button key={item.key} onClick={() => { navigate(item.to); setSidebarOpen(false); }} className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left font-semibold transition ${item.key === "banners" ? "theme-button" : "theme-soft-button"}`}>
-                                <item.icon size={18} /> {item.label}
-                            </button>
-                        ))}
-                    </nav>
-                </aside>
-            </div>
+            <SuperAdminSidebar open={sidebarOpen} setOpen={setSidebarOpen} currentKey="banners" />
 
-            <header className="theme-nav border-b px-4 py-4 md:px-8">
-                <div className="mx-auto flex max-w-7xl items-center justify-between">
+            <header className="theme-nav border-b px-2 py-2 md:px-3">
+                <div className="w-full flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button onClick={() => setSidebarOpen(true)} className="theme-soft-button p-2 rounded-full"><Menu size={20} /></button>
                         <h1 className="text-2xl font-bold">App Banners</h1>
@@ -125,7 +104,7 @@ export default function SuperAdminBanners() {
                 </div>
             </header>
 
-            <main className="mx-auto max-w-7xl px-4 py-8 md:px-8">
+            <main className="w-full px-2 py-3 md:px-3">
                 {error && <div className="mb-6 rounded-2xl bg-red-500/10 border border-red-500/20 p-4 text-red-300 text-sm">{error}</div>}
 
                 {showForm && (
@@ -206,6 +185,6 @@ export default function SuperAdminBanners() {
     );
 }
 
-function Power({ size, className }) {
+function PowerIcon({ size, className }) {
     return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M18.36 6.64a9 9 0 1 1-12.73 0" /><line x1="12" y1="2" x2="12" y2="12" /></svg>;
 }

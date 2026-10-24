@@ -2,6 +2,7 @@ import defaultPrisma from "../prisma.js";
 import {
   getWalletSummary,
   getWalletTransactions,
+  getWalletAnalytics,
   createTopupSession,
   verifyAndCreditTopup,
   payOrderWithWallet,
@@ -90,19 +91,44 @@ export default async function walletRoutes(app, deps) {
     }
   });
 
+  // GET /api/wallet/analytics -> Get Aggregated Wallet Analytics & Trend
+  app.get("/api/wallet/analytics", { preHandler: requireCustomer }, async (req, reply) => {
+    try {
+      const { period } = req.query || {};
+      const analytics = await getWalletAnalytics(prisma, req.customerAccount.id, {
+        period,
+      });
+      return {
+        success: true,
+        data: analytics,
+      };
+    } catch (err) {
+      if (err.statusCode === 400) {
+        return reply.code(400).send({ success: false, message: err.message });
+      }
+      console.error("[Wallet] GET /api/wallet/analytics error:", err);
+      return reply.code(500).send({ success: false, message: err.message || "Failed to fetch wallet analytics" });
+    }
+  });
+
   // POST /api/wallet/topup/create -> Initiate Cashfree Top-Up Session
   app.post("/api/wallet/topup/create", { preHandler: requireCustomer }, async (req, reply) => {
     try {
       const { amount, returnUrl, idempotencyKey } = req.body || {};
-      const session = await createTopupSession(prisma, req.customerAccount.id, {
+      const session = await createTopupSession(prisma, {
+        customerAccountId: req.customerAccount.id,
         amount,
-        customerName: req.customerAccount.name,
-        customerEmail: req.customerAccount.email,
-        customerPhone: req.customerAccount.phone,
         returnUrl,
         idempotencyKey,
       });
-      return { success: true, session };
+      return {
+        success: true,
+        session,
+        paymentSessionId: session.paymentSessionId,
+        payment_session_id: session.payment_session_id,
+        topupTxnId: session.topupTxnId,
+        gatewayOrderId: session.gatewayOrderId,
+      };
     } catch (err) {
       console.error("[Wallet] Top-up create error:", err);
       return reply.code(400).send({ message: err.message || "Failed to create top-up session" });
@@ -144,6 +170,7 @@ export default async function walletRoutes(app, deps) {
         orderId,
         amount,
         idempotencyKey,
+        realtime: deps?.realtime || req.server?.realtime || null,
       });
       return result;
     } catch (err) {
@@ -159,53 +186,73 @@ export default async function walletRoutes(app, deps) {
   // GET /super-admin/wallets -> Admin Wallet Dashboard & Directory
   app.get("/super-admin/wallets", { preHandler: requireSuperAdmin }, async (req, reply) => {
     try {
-      const [totalWallets, aggregate, topups, recentLedgers] = await Promise.all([
-        prisma.wallet.count(),
-        prisma.wallet.aggregate({ _sum: { balance: true } }),
-        prisma.walletTopup.aggregate({
-          where: { status: "SUCCESS" },
-          _sum: { amount: true },
-          _count: true,
-        }),
-        prisma.walletLedger.findMany({
-          orderBy: { createdAt: "desc" },
-          take: 30,
-          include: {
-            wallet: {
-              include: {
-                customerAccount: { select: { id: true, name: true, phone: true, email: true } },
-              },
+      if (!prisma.wallet || !prisma.walletLedger) {
+        return {
+          metrics: {
+            totalWallets: 0,
+            totalBalance: 0,
+            totalTopupsCount: 0,
+            totalTopupAmount: 0,
+            currency: WALLET_CONFIG.CURRENCY || "INR",
+          },
+          recentLedgers: [],
+        };
+      }
+
+      const totalWallets = await prisma.wallet.count().catch(() => 0);
+      const aggregate = await prisma.wallet.aggregate({ _sum: { balance: true } }).catch(() => ({ _sum: { balance: 0 } }));
+      const topups = await prisma.walletTopup.aggregate({
+        where: { status: "SUCCESS" },
+        _sum: { amount: true },
+        _count: true,
+      }).catch(() => ({ _sum: { amount: 0 }, _count: 0 }));
+      const recentLedgers = await prisma.walletLedger.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 30,
+        include: {
+          wallet: {
+            include: {
+              customerAccount: { select: { id: true, name: true, phone: true, email: true } },
             },
           },
-        }),
-      ]);
+        },
+      }).catch(() => []);
 
-      const totalBalance = Math.round(Number(aggregate._sum.balance || 0) * 100) / 100;
-      const totalTopupAmount = Math.round(Number(topups._sum.amount || 0) * 100) / 100;
+      const totalBalance = Math.round(Number(aggregate?._sum?.balance || 0) * 100) / 100;
+      const totalTopupAmount = Math.round(Number(topups?._sum?.amount || 0) * 100) / 100;
 
       return {
         metrics: {
-          totalWallets,
+          totalWallets: totalWallets || 0,
           totalBalance,
-          totalTopupsCount: topups._count || 0,
+          totalTopupsCount: topups?._count || 0,
           totalTopupAmount,
-          currency: WALLET_CONFIG.CURRENCY,
+          currency: WALLET_CONFIG.CURRENCY || "INR",
         },
-        recentLedgers: recentLedgers.map((l) => ({
+        recentLedgers: (recentLedgers || []).map((l) => ({
           id: l.id,
           type: l.type,
           direction: l.direction,
-          amount: Math.round(Number(l.amount) * 100) / 100,
-          balanceAfter: Math.round(Number(l.balanceAfter) * 100) / 100,
-          description: l.description,
+          amount: Math.round(Number(l.amount || 0) * 100) / 100,
+          balanceAfter: Math.round(Number(l.balanceAfter || 0) * 100) / 100,
+          description: l.description || "",
           customerName: l.wallet?.customerAccount?.name || "Customer",
           customerPhone: l.wallet?.customerAccount?.phone || "N/A",
           createdAt: l.createdAt,
         })),
       };
     } catch (err) {
-      console.error("[SuperAdminWallet] Overview error:", err);
-      return reply.code(500).send({ message: "Failed to fetch admin wallet metrics" });
+      console.warn("[SuperAdminWallet] Overview warning:", err?.message || err);
+      return {
+        metrics: {
+          totalWallets: 0,
+          totalBalance: 0,
+          totalTopupsCount: 0,
+          totalTopupAmount: 0,
+          currency: WALLET_CONFIG.CURRENCY || "INR",
+        },
+        recentLedgers: [],
+      };
     }
   });
 

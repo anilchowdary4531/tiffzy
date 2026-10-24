@@ -53,6 +53,7 @@ vi.mock("../layouts/AdminLayout", () => ({
 
 vi.mock("../context/AuthContext", () => ({
     default: ({ children }) => <>{children}</>,
+    useAuth: () => ({ user: { id: 1, name: "Test Owner", role: "OWNER", restaurantId: 1 } }),
 }));
 
 vi.mock("../routes/ProtectedRoute", () => ({
@@ -61,6 +62,7 @@ vi.mock("../routes/ProtectedRoute", () => ({
 
 vi.mock("../context/StaffSocketContext.jsx", () => ({
     StaffSocketProvider: ({ children }) => <>{children}</>,
+    useStaffSocket: () => ({ socket: null, connected: false }),
 }));
 
 vi.mock("../pages/admin/OwnerDashboard", () => ({
@@ -221,9 +223,9 @@ describe("owner panel pages", () => {
         expect(screen.getByTestId("owner-orders")).toBeInTheDocument();
     });
 
-    it("renders the owner online orders page", () => {
+    it("redirects owner online orders route to owner kitchen", () => {
         renderAt("/owner/online-orders");
-        expect(screen.getByTestId("owner-online-orders")).toBeInTheDocument();
+        expect(screen.getByTestId("owner-kitchen")).toBeInTheDocument();
     });
 
     it("renders the menu studio page", () => {

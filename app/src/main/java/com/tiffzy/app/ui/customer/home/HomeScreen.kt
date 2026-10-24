@@ -85,6 +85,7 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val authState by authViewModel.uiState.collectAsState()
+    val cartItems by com.tiffzy.app.data.repository.CartRepository.getInstance().cartItems.collectAsState()
 
     LaunchedEffect(authState) {
         if (authState is AuthUiState.Idle) {
@@ -103,13 +104,14 @@ fun HomeScreen(
                 onScanClick = onScanClick
             ) 
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .padding(innerPadding)
+                .padding(top = innerPadding.calculateTopPadding())
         ) {
             when (val state = uiState) {
                 is HomeUiState.Loading -> {
@@ -119,9 +121,7 @@ fun HomeScreen(
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(0.dp), // Zero spacing between rows
-                        contentPadding = PaddingValues(
-                            bottom = Dimens.PaddingExtraLarge
-                        )
+                        contentPadding = PaddingValues(bottom = 0.dp)
                     ) {
                         // 1. Promo Banner Slider
                         item {
@@ -138,7 +138,7 @@ fun HomeScreen(
                                 },
                                 modifier = Modifier
                                     .padding(horizontal = Dimens.PaddingMedium)
-                                    .padding(top = Dimens.PaddingSmall)
+                                    .padding(top = 4.dp)
                             )
                         }
 
@@ -162,8 +162,28 @@ fun HomeScreen(
                             }
                         }
 
-                        // 3. Top Restaurants (Horizontal Cards)
-                        if (state.restaurants.isNotEmpty()) {
+                        // 3. Restaurants Near You or Top Restaurants
+                        if (state.nearbyRestaurants.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    title = "Restaurants Near You",
+                                    actionText = "Map View 🗺️",
+                                    onActionClick = onMapClick,
+                                    modifier = Modifier.padding(horizontal = Dimens.PaddingMedium)
+                                )
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium),
+                                    contentPadding = PaddingValues(horizontal = Dimens.PaddingMedium, vertical = Dimens.PaddingSmall)
+                                ) {
+                                    items(state.nearbyRestaurants) { restaurant ->
+                                        TiffzyNearbyRestaurantCard(
+                                            restaurant = restaurant,
+                                            onClick = { onRestaurantClick(restaurant.slug) }
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (state.restaurants.isNotEmpty()) {
                             item {
                                 SectionHeader(
                                     title = "Top Restaurants",
@@ -202,11 +222,15 @@ fun HomeScreen(
                                         )
                                     ) {
                                         items(categoryItems) { item ->
+                                            val inCartQty = cartItems.find { it.menuItem.id == item.id }?.quantity ?: 0
                                             TiffzyDiscoveryItemCard(
                                                 item = item,
                                                 onClick = { onRestaurantClick(item.restaurant.slug) },
                                                 onAddClick = { viewModel.addToCart(item) },
-                                                modifier = Modifier.width(120.dp)
+                                                quantity = inCartQty,
+                                                onIncrease = { com.tiffzy.app.data.repository.CartRepository.getInstance().increaseQuantity(item.id) },
+                                                onDecrease = { com.tiffzy.app.data.repository.CartRepository.getInstance().decreaseQuantity(item.id) },
+                                                modifier = Modifier.width(136.dp)
                                             )
                                         }
                                     }
@@ -224,11 +248,15 @@ fun HomeScreen(
                                     horizontalArrangement = Arrangement.spacedBy(Dimens.SpacingMedium)
                                 ) {
                                     rowItems.forEach { item ->
+                                        val inCartQty = cartItems.find { it.menuItem.id == item.id }?.quantity ?: 0
                                         Box(modifier = Modifier.weight(1f)) {
                                             TiffzyDiscoveryItemCard(
                                                 item = item,
                                                 onClick = { onRestaurantClick(item.restaurant.slug) },
-                                                onAddClick = { viewModel.addToCart(item) }
+                                                onAddClick = { viewModel.addToCart(item) },
+                                                quantity = inCartQty,
+                                                onIncrease = { com.tiffzy.app.data.repository.CartRepository.getInstance().increaseQuantity(item.id) },
+                                                onDecrease = { com.tiffzy.app.data.repository.CartRepository.getInstance().decreaseQuantity(item.id) }
                                             )
                                         }
                                     }
@@ -303,8 +331,8 @@ fun HomeScreenCategoryItem(
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) 
             else 
                 MaterialTheme.colorScheme.surface,
-            tonalElevation = if (category.imageUrl.isNullOrEmpty()) 0.dp else 2.dp,
-            shadowElevation = if (category.imageUrl.isNullOrEmpty()) 0.dp else 4.dp
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp
         ) {
             Box(contentAlignment = Alignment.Center) {
                 if (!category.imageUrl.isNullOrEmpty()) {
@@ -527,8 +555,8 @@ fun SectionHeader(
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Black,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
         )
         if (actionText != null) {

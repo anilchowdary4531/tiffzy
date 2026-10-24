@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams, useOutletContext } from "react-router-dom";
 import axios from "axios";
-import { MoreVertical } from "lucide-react";
+import { Menu, MoreVertical, Search, Trash2 } from "lucide-react";
 import { API } from "../../config";
 import { uploadToS3Presigned } from "../../utils/s3Upload";
 import { resolveImageUrl } from "../../utils/resolveImageUrl";
-import { invalidateGetCache } from "../../utils/apiClient";
+import { api, invalidateGetCache } from "../../utils/apiClient";
+import { useAuth } from "../../context/AuthContext";
+import DigitalMenuQrModal from "../../components/DigitalMenuQrModal";
 
 const emptyForm = {
     name: "",
@@ -14,7 +17,32 @@ const emptyForm = {
     originalPrice: "",
     discountPercent: "",
     isAvailable: true,
+    variants: [],
+    modifierGroups: [],
 };
+
+const emptyTobaccoForm = {
+    name: "",
+    brand: "",
+    category: "Cigarettes",
+    packSize: "10 Sticks Pack",
+    description: "Statutory Warning: Tobacco causes painful death. 18+ Only.",
+    image: "",
+    originalPrice: "",
+    discountPercent: "0",
+    isTobacco: true,
+    ageVerificationRequired: true,
+    isAvailable: true,
+};
+
+const TOBACCO_CATEGORIES = [
+    "Cigarettes",
+    "Cigars",
+    "Smokeless Tobacco",
+    "Hookah / Shisha",
+    "Vapes / E-Cigarettes",
+    "Rolling Tobacco",
+];
 
 const toMoney = (value) => {
     const number = Number(value || 0);
@@ -34,9 +62,16 @@ const getDiscountedPrice = (originalPrice, discountPercent) => {
 };
 
 export default function MenuStudio() {
+    const [searchParams] = useSearchParams();
+    const { setSidebarOpen } = useOutletContext() || {};
+    const isTobaccoParam = searchParams.get("tobacco") === "true";
+
     const [items, setItems] = useState([]);
+    const [restaurantInfo, setRestaurantInfo] = useState(null);
+    const [showDigitalMenuModal, setShowDigitalMenuModal] = useState(false);
     const [search, setSearch] = useState("");
     const [form, setForm] = useState(emptyForm);
+    const [formType, setFormType] = useState("NORMAL"); // "NORMAL" | "TOBACCO"
     const [formOpen, setFormOpen] = useState(false);
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -92,8 +127,17 @@ export default function MenuStudio() {
         try {
             setLoading(true);
             setError("");
-            const res = await axios.get(`${API}/owner/${restaurantId}/menu`);
-            setItems(res.data || []);
+            const [menuRes, settingsRes] = await Promise.all([
+                api.get(`/owner/${restaurantId}/menu`),
+                api.get(`/owner/${restaurantId}/settings`).catch(() => null),
+            ]);
+            const menuData = menuRes?.data || menuRes;
+            setItems(Array.isArray(menuData) ? menuData : (menuData?.items || []));
+
+            const settingsData = settingsRes?.data || settingsRes;
+            if (settingsData) {
+                setRestaurantInfo(settingsData.restaurant || settingsData);
+            }
         } catch (err) {
             console.log(err);
             setError(getErrorMessage(err, "Unable to load menu. Please try again."));
@@ -105,6 +149,14 @@ export default function MenuStudio() {
     useEffect(() => {
         loadMenu();
     }, [restaurantId]);
+
+    useEffect(() => {
+        if (isTobaccoParam && restaurantInfo?.tobaccoApproved === true) {
+            setFormType("TOBACCO");
+            setForm(emptyTobaccoForm);
+            setFormOpen(true);
+        }
+    }, [isTobaccoParam, restaurantInfo?.tobaccoApproved]);
 
     useEffect(() => {
         if (!openActionMenuId) return undefined;
@@ -132,8 +184,8 @@ export default function MenuStudio() {
         };
     }, [openActionMenuId]);
 
-    const resetForm = ({ close = false } = {}) => {
-        setForm(emptyForm);
+    const resetForm = ({ close = false, type = formType } = {}) => {
+        setForm(type === "TOBACCO" ? emptyTobaccoForm : emptyForm);
         setEditingId(null);
         if (close) setFormOpen(false);
     };
@@ -201,6 +253,7 @@ export default function MenuStudio() {
                 originalPrice,
                 discountPercent,
                 price,
+                isTobacco: formType === "TOBACCO",
             };
 
             if (editingId) {
@@ -221,15 +274,41 @@ export default function MenuStudio() {
         }
     };
 
+    const isTobaccoItem = (item) => {
+        if (item.isTobacco) return true;
+        if (TOBACCO_CATEGORIES.some((cat) => item.category?.toLowerCase()?.includes(cat.toLowerCase()))) return true;
+        return false;
+    };
+
     const startEdit = (item) => {
+        const isTob = isTobaccoItem(item);
+        setFormType(isTob ? "TOBACCO" : "NORMAL");
         setForm({
             name: item.name || "",
+            brand: item.brand || "",
+            category: item.category || (isTob ? "Cigarettes" : ""),
+            packSize: item.packSize || "10 Sticks Pack",
             description: item.description || "",
-            category: item.category || "",
             image: item.image || "",
             originalPrice: item.originalPrice ?? item.price ?? "",
             discountPercent: item.discountPercent ?? 0,
+            isTobacco: isTob,
+            ageVerificationRequired: item.ageVerificationRequired !== false,
             isAvailable: item.isAvailable ?? true,
+            variants: Array.isArray(item.variants)
+                ? item.variants.map((v) => ({ name: v.name, price: v.price, isDefault: Boolean(v.isDefault), isActive: v.isActive !== false }))
+                : [],
+            modifierGroups: Array.isArray(item.modifierGroups)
+                ? item.modifierGroups.map((g) => ({
+                    name: g.name,
+                    isRequired: Boolean(g.isRequired),
+                    minSelect: g.minSelect || 0,
+                    maxSelect: g.maxSelect || 1,
+                    options: Array.isArray(g.modifiers)
+                        ? g.modifiers.map((m) => ({ name: m.name, price: m.price, isAvailable: m.isAvailable !== false }))
+                        : [],
+                }))
+                : [],
         });
         setEditingId(item.id);
         setFormOpen(true);
@@ -277,6 +356,83 @@ export default function MenuStudio() {
         }
     };
 
+    // Variant Helper methods
+    const addVariantRow = () => {
+        setForm((prev) => ({
+            ...prev,
+            variants: [...(prev.variants || []), { name: "", price: "" }],
+        }));
+    };
+
+    const updateVariantRow = (index, field, value) => {
+        setForm((prev) => {
+            const list = [...(prev.variants || [])];
+            list[index] = { ...list[index], [field]: value };
+            return { ...prev, variants: list };
+        });
+    };
+
+    const removeVariantRow = (index) => {
+        setForm((prev) => ({
+            ...prev,
+            variants: (prev.variants || []).filter((_, idx) => idx !== index),
+        }));
+    };
+
+    // Modifier Group Helper methods
+    const addModifierGroupRow = () => {
+        setForm((prev) => ({
+            ...prev,
+            modifierGroups: [
+                ...(prev.modifierGroups || []),
+                { name: "", isRequired: false, minSelect: 0, maxSelect: 1, options: [{ name: "", price: 0 }] },
+            ],
+        }));
+    };
+
+    const updateModifierGroupRow = (gIndex, field, value) => {
+        setForm((prev) => {
+            const groups = [...(prev.modifierGroups || [])];
+            groups[gIndex] = { ...groups[gIndex], [field]: value };
+            return { ...prev, modifierGroups: groups };
+        });
+    };
+
+    const removeModifierGroupRow = (gIndex) => {
+        setForm((prev) => ({
+            ...prev,
+            modifierGroups: (prev.modifierGroups || []).filter((_, idx) => idx !== gIndex),
+        }));
+    };
+
+    const addGroupOption = (gIndex) => {
+        setForm((prev) => {
+            const groups = [...(prev.modifierGroups || [])];
+            const opts = [...(groups[gIndex].options || []), { name: "", price: 0 }];
+            groups[gIndex] = { ...groups[gIndex], options: opts };
+            return { ...prev, modifierGroups: groups };
+        });
+    };
+
+    const updateGroupOption = (gIndex, oIndex, field, value) => {
+        setForm((prev) => {
+            const groups = [...(prev.modifierGroups || [])];
+            const opts = [...(groups[gIndex].options || [])];
+            opts[oIndex] = { ...opts[oIndex], [field]: value };
+            groups[gIndex] = { ...groups[gIndex], options: opts };
+            return { ...prev, modifierGroups: groups };
+        });
+    };
+
+    const removeGroupOption = (gIndex, oIndex) => {
+        setForm((prev) => {
+            const groups = [...(prev.modifierGroups || [])];
+            const opts = (groups[gIndex].options || []).filter((_, idx) => idx !== oIndex);
+            groups[gIndex] = { ...groups[gIndex], options: opts };
+            return { ...prev, modifierGroups: groups };
+        });
+    };
+
     const filteredItems = items.filter((item) => {
         const q = search.trim().toLowerCase();
         if (!q) return true;
@@ -297,42 +453,111 @@ export default function MenuStudio() {
     }, [filteredItems]);
 
     return (
-        <section className="text-[color:var(--app-text)]">
-            <h3 className="text-3xl font-bold">Menu Studio</h3>
-            <p className="mt-1 text-sm text-[color:var(--app-muted)]">
-                Create, edit, and control item availability for your restaurant menu.
-            </p>
+        <div className="theme-page min-h-screen px-1 py-2 sm:px-2 w-full">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setSidebarOpen?.(true)}
+                            className="theme-icon-button theme-icon-button-primary inline-flex items-center justify-center rounded-xl p-2.5 shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                            aria-label="Open navigation menu"
+                            title="Open navigation menu"
+                        >
+                            <Menu size={20} />
+                        </button>
+                        <h1 className="text-2xl font-bold tracking-tight text-[color:var(--app-heading)]">Menu Studio</h1>
+                    </div>
+                    <p className="mt-1 text-xs text-[color:var(--app-muted)]">
+                        Create, edit, and control item availability, variants, and add-ons for your restaurant menu.
+                    </p>
+                </div>
+            </div>
 
-            <div className="mt-4 flex items-center gap-3">
-                <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search by item name or category..."
-                    className="theme-input w-full rounded-xl px-4 py-3 outline-none"
-                />
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+                <div className="relative min-w-[220px] flex-1">
+                    <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-[color:var(--app-muted)]" />
+                    <input
+                        className="theme-input w-full rounded-xl py-2 pr-3 pl-9 outline-none"
+                        placeholder="Search menu items..."
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                    />
+                </div>
+                <button
+                    type="button"
+                    onClick={() => setShowDigitalMenuModal(true)}
+                    className="flex items-center space-x-2 px-4 py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-gray-950 font-extrabold text-xs rounded-xl shadow-lg transition"
+                >
+                    <span>Digital Menu QR</span>
+                </button>
                 <button
                     type="button"
                     onClick={() => {
-                        setFormOpen((prev) => !prev);
-                        if (formOpen && !editingId) resetForm();
+                        if (formOpen && formType === "NORMAL" && !editingId) {
+                            setFormOpen(false);
+                        } else {
+                            setFormType("NORMAL");
+                            setEditingId(null);
+                            setForm(emptyForm);
+                            setFormOpen(true);
+                        }
                     }}
-                    className="theme-button shrink-0 rounded-xl px-4 py-3 font-semibold"
+                    className={`rounded-xl px-4 py-3 font-semibold transition ${
+                        formOpen && formType === "NORMAL"
+                            ? "bg-zinc-800 text-zinc-300 border border-zinc-700"
+                            : "theme-button"
+                    }`}
                 >
-                    {formOpen ? "Hide Form" : "Add Item"}
+                    {formOpen && formType === "NORMAL" ? "Hide Normal Form" : "+ Add Item"}
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (formOpen && formType === "TOBACCO" && !editingId) {
+                            setFormOpen(false);
+                        } else {
+                            setFormType("TOBACCO");
+                            setEditingId(null);
+                            setForm(emptyTobaccoForm);
+                            setFormOpen(true);
+                        }
+                    }}
+                    className={`flex items-center gap-2 rounded-xl px-4 py-3 font-bold text-xs shadow-xs transition cursor-pointer ${
+                        formOpen && formType === "TOBACCO"
+                            ? "theme-soft-button"
+                            : "bg-orange-600 hover:bg-orange-500 text-white"
+                    }`}
+                >
+                    <span className="text-base">🚬</span>
+                    <span>{formOpen && formType === "TOBACCO" ? "Hide Tobacco Form" : "+ Add Tobacco Item"}</span>
                 </button>
             </div>
 
             {error && (
-                <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300">
                     {error}
                 </div>
             )}
 
-            {formOpen && (
+            {/* NORMAL ITEM FORM */}
+            {formOpen && formType === "NORMAL" && (
                 <form
                     onSubmit={handleSubmit}
-                    className="theme-panel mt-6 grid gap-3 rounded-2xl p-5 md:grid-cols-2"
+                    className="theme-panel mt-6 grid gap-4 rounded-2xl p-5 md:grid-cols-2"
                 >
+                    <div className="md:col-span-2 flex items-center justify-between border-b border-[color:var(--app-border)]/40 pb-2">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xl">🍽️</span>
+                            <h2 className="text-sm font-bold uppercase tracking-wider text-[color:var(--app-primary)]">
+                                {editingId ? "Edit Normal Menu Item" : "Add Normal Menu Item"}
+                            </h2>
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            Food & Beverage
+                        </span>
+                    </div>
+
                     <input
                         className="theme-input rounded-xl px-3 py-2 outline-none"
                         placeholder="Item name"
@@ -341,13 +566,13 @@ export default function MenuStudio() {
                     />
                     <input
                         className="theme-input rounded-xl px-3 py-2 outline-none"
-                        placeholder="Category"
+                        placeholder="Category (e.g. Coffee, Food, Sweets)"
                         value={form.category}
                         onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
                     />
                     <input
                         className="theme-input rounded-xl px-3 py-2 outline-none"
-                        placeholder="Original price"
+                        placeholder="Original base price (₹)"
                         type="number"
                         min="0"
                         step="0.01"
@@ -370,6 +595,7 @@ export default function MenuStudio() {
                             {formatMoney(getDiscountedPrice(form.originalPrice, form.discountPercent))}
                         </p>
                     </div>
+
                     <div className="flex flex-col gap-2 md:col-span-2">
                         <div className="flex flex-col gap-2 md:flex-row md:items-center">
                             <input
@@ -394,6 +620,173 @@ export default function MenuStudio() {
                         value={form.description}
                         onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
                     />
+
+                    {/* VARIANTS SECTION */}
+                    <div className="rounded-2xl border border-[color:var(--app-border)] bg-zinc-900/40 p-4 md:col-span-2 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                                    Item Portion / Size Variants (Optional)
+                                </h3>
+                                <p className="text-[11px] text-[color:var(--app-muted)]">
+                                    e.g., Small ₹200, Medium ₹300, Large ₹400
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={addVariantRow}
+                                className="theme-soft-button rounded-xl px-3 py-1.5 text-xs font-semibold text-amber-300 border border-amber-500/30"
+                            >
+                                + Add Variant
+                            </button>
+                        </div>
+
+                        {Array.isArray(form.variants) && form.variants.length > 0 && (
+                            <div className="space-y-2">
+                                {form.variants.map((v, vIdx) => (
+                                    <div key={vIdx} className="flex items-center gap-2">
+                                        <input
+                                            className="theme-input flex-1 rounded-xl px-3 py-1.5 text-xs outline-none"
+                                            placeholder="Variant Name (e.g. Large / Half)"
+                                            value={v.name}
+                                            onChange={(e) => updateVariantRow(vIdx, "name", e.target.value)}
+                                        />
+                                        <input
+                                            className="theme-input w-28 rounded-xl px-3 py-1.5 text-xs outline-none"
+                                            placeholder="Price (₹)"
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={v.price}
+                                            onChange={(e) => updateVariantRow(vIdx, "price", e.target.value)}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => removeVariantRow(vIdx)}
+                                            className="rounded-xl p-2 text-rose-400 hover:bg-rose-500/10 transition"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* MODIFIER GROUPS SECTION */}
+                    <div className="rounded-2xl border border-[color:var(--app-border)] bg-zinc-900/40 p-4 md:col-span-2 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                                    Modifier Groups & Add-ons (Optional)
+                                </h3>
+                                <p className="text-[11px] text-[color:var(--app-muted)]">
+                                    e.g., Crust (Normal, Cheese Burst +₹80) or Toppings (Extra Cheese +₹50)
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={addModifierGroupRow}
+                                className="theme-soft-button rounded-xl px-3 py-1.5 text-xs font-semibold text-amber-300 border border-amber-500/30"
+                            >
+                                + Add Modifier Group
+                            </button>
+                        </div>
+
+                        {Array.isArray(form.modifierGroups) && form.modifierGroups.length > 0 && (
+                            <div className="space-y-4">
+                                {form.modifierGroups.map((group, gIdx) => (
+                                    <div key={gIdx} className="rounded-xl border border-[color:var(--app-border)] bg-zinc-950/60 p-3 space-y-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <input
+                                                className="theme-input flex-1 min-w-[180px] rounded-xl px-3 py-1.5 text-xs font-semibold outline-none"
+                                                placeholder="Group Name (e.g. Crust / Toppings)"
+                                                value={group.name}
+                                                onChange={(e) => updateModifierGroupRow(gIdx, "name", e.target.value)}
+                                            />
+                                            <div className="flex items-center gap-3">
+                                                <label className="flex items-center gap-1.5 text-xs text-zinc-300">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={group.isRequired}
+                                                        onChange={(e) => updateModifierGroupRow(gIdx, "isRequired", e.target.checked)}
+                                                    />
+                                                    Required
+                                                </label>
+                                                <div className="flex items-center gap-1 text-xs text-zinc-400">
+                                                    <span>Min:</span>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        className="theme-input w-12 rounded-lg px-1.5 py-1 text-xs outline-none text-center"
+                                                        value={group.minSelect}
+                                                        onChange={(e) => updateModifierGroupRow(gIdx, "minSelect", Number(e.target.value))}
+                                                    />
+                                                </div>
+                                                <div className="flex items-center gap-1 text-xs text-zinc-400">
+                                                    <span>Max:</span>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        className="theme-input w-12 rounded-lg px-1.5 py-1 text-xs outline-none text-center"
+                                                        value={group.maxSelect}
+                                                        onChange={(e) => updateModifierGroupRow(gIdx, "maxSelect", Number(e.target.value))}
+                                                    />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeModifierGroupRow(gIdx)}
+                                                    className="rounded-xl p-1.5 text-rose-400 hover:bg-rose-500/10 transition"
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Group Options */}
+                                        <div className="space-y-2 pl-3 border-l-2 border-amber-500/30">
+                                            <div className="flex items-center justify-between text-[11px] font-bold text-zinc-400">
+                                                <span>Options / Add-ons</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => addGroupOption(gIdx)}
+                                                    className="text-amber-400 hover:underline"
+                                                >
+                                                    + Add Option
+                                                </button>
+                                            </div>
+                                            {Array.isArray(group.options) && group.options.map((opt, oIdx) => (
+                                                <div key={oIdx} className="flex items-center gap-2">
+                                                    <input
+                                                        className="theme-input flex-1 rounded-xl px-3 py-1 text-xs outline-none"
+                                                        placeholder="Option Name (e.g. Cheese Burst / Extra Cheese)"
+                                                        value={opt.name}
+                                                        onChange={(e) => updateGroupOption(gIdx, oIdx, "name", e.target.value)}
+                                                    />
+                                                    <input
+                                                        className="theme-input w-28 rounded-xl px-3 py-1 text-xs outline-none"
+                                                        placeholder="Price (+₹)"
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        value={opt.price}
+                                                        onChange={(e) => updateGroupOption(gIdx, oIdx, "price", e.target.value)}
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeGroupOption(gIdx, oIdx)}
+                                                        className="rounded-lg p-1 text-zinc-500 hover:text-rose-400 transition"
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
 
                     <label className="flex items-center gap-2 text-sm text-[color:var(--app-muted-strong)]">
                         <input
@@ -423,36 +816,251 @@ export default function MenuStudio() {
                 </form>
             )}
 
+            {/* DEDICATED TOBACCO FORM — WORDS ON PAPER MINIMALIST LAYOUT */}
+            {formOpen && formType === "TOBACCO" && (
+                <form
+                    onSubmit={handleSubmit}
+                    className="mt-6 border-b border-[color:var(--app-border)]/40 pb-6 space-y-4 text-[color:var(--app-text)] font-sans"
+                >
+                    {/* Header Notice Line */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[color:var(--app-border)]/40 pb-3">
+                        <div className="flex items-center gap-2.5">
+                            <span className="text-lg">🔞</span>
+                            <div>
+                                <h2 className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-primary)] flex items-center gap-2">
+                                    Statutory Tobacco Product Registry
+                                    <span className="text-[10px] bg-orange-500/15 text-orange-500 border border-orange-500/30 px-2 py-0.5 rounded-full font-extrabold tracking-widest">
+                                        18+ MANDATORY
+                                    </span>
+                                </h2>
+                                <p className="theme-muted text-xs mt-0.5">
+                                    Under COPTA regulations, tobacco product sales are legally restricted to adults aged 18+. Ensure age verification is strictly enforced.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Inputs Grid */}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Tobacco Product / Item Name *
+                            </label>
+                            <input
+                                className="theme-input rounded-xl px-3.5 py-2 text-sm outline-none"
+                                placeholder="e.g. Classic Milds, Marlboro Lights, Shisha Mint"
+                                value={form.name}
+                                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Tobacco Category *
+                            </label>
+                            <select
+                                className="theme-input rounded-xl px-3.5 py-2 text-sm outline-none"
+                                value={form.category}
+                                onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
+                            >
+                                {TOBACCO_CATEGORIES.map((cat) => (
+                                    <option key={cat} value={cat}>
+                                        {cat}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Brand / Manufacturer
+                            </label>
+                            <input
+                                className="theme-input rounded-xl px-3.5 py-2 text-sm outline-none"
+                                placeholder="e.g. ITC Ltd, Philip Morris, Godfrey Phillips"
+                                value={form.brand || ""}
+                                onChange={(e) => setForm((prev) => ({ ...prev, brand: e.target.value }))}
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Pack Size / Stick Count
+                            </label>
+                            <input
+                                className="theme-input rounded-xl px-3.5 py-2 text-sm outline-none"
+                                placeholder="e.g. 10 Sticks Pack, 20 Sticks Pack, 50g Tub"
+                                value={form.packSize || ""}
+                                onChange={(e) => setForm((prev) => ({ ...prev, packSize: e.target.value }))}
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Original Price / MRP (₹) *
+                            </label>
+                            <input
+                                className="theme-input rounded-xl px-3.5 py-2 text-sm outline-none"
+                                placeholder="Price in ₹"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={form.originalPrice}
+                                onChange={(e) => setForm((prev) => ({ ...prev, originalPrice: e.target.value }))}
+                            />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Discount %
+                            </label>
+                            <input
+                                className="theme-input rounded-xl px-3.5 py-2 text-sm outline-none"
+                                placeholder="0"
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.01"
+                                value={form.discountPercent}
+                                onChange={(e) => setForm((prev) => ({ ...prev, discountPercent: e.target.value }))}
+                            />
+                        </div>
+
+                        {/* Price Preview Strip */}
+                        <div className="sm:col-span-2 py-2 border-y border-[color:var(--app-border)]/40 flex items-center justify-between">
+                            <div>
+                                <p className="text-xs uppercase tracking-wider font-bold text-[color:var(--app-primary)]">Effective Retail Selling Price</p>
+                                <p className="text-xs theme-muted">Calculated after statutory discount</p>
+                            </div>
+                            <p className="text-xl font-extrabold text-[color:var(--app-text)]">
+                                {formatMoney(getDiscountedPrice(form.originalPrice, form.discountPercent))}
+                            </p>
+                        </div>
+
+                        {/* Product Image */}
+                        <div className="flex flex-col gap-1 sm:col-span-2">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Product Image (Upload or URL)
+                            </label>
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                <input
+                                    type="file"
+                                    accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                                    disabled={imageUploading}
+                                    onChange={(e) => uploadMenuImage(e.target.files?.[0])}
+                                    className="block w-full text-xs text-[color:var(--app-muted)] file:mr-3 file:rounded-xl file:border-0 file:bg-[color:var(--app-border)]/40 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-[color:var(--app-text)] hover:file:bg-[color:var(--app-border)]/60 disabled:opacity-70 sm:w-auto cursor-pointer"
+                                />
+                                <input
+                                    className="theme-input flex-1 rounded-xl px-3.5 py-2 text-sm outline-none"
+                                    placeholder="Image URL (optional)"
+                                    value={form.image}
+                                    onChange={(e) => setForm((prev) => ({ ...prev, image: e.target.value }))}
+                                />
+                            </div>
+                            {imageUploading && <p className="text-xs text-amber-500">Uploading image to S3...</p>}
+                        </div>
+
+                        {/* Health Warning */}
+                        <div className="flex flex-col gap-1 sm:col-span-2">
+                            <label className="text-xs font-bold uppercase tracking-wider text-[color:var(--app-muted-strong)]">
+                                Statutory Health Warning & Description
+                            </label>
+                            <textarea
+                                rows={2}
+                                className="theme-input w-full rounded-xl px-3.5 py-2 text-sm outline-none"
+                                placeholder="Statutory warning text..."
+                                value={form.description}
+                                onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                            />
+                        </div>
+
+                        {/* Compliance Flags */}
+                        <div className="flex flex-col gap-2 sm:col-span-2 pt-1">
+                            <label className="flex items-center gap-2.5 text-xs font-bold text-[color:var(--app-text)] cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="rounded text-orange-500 focus:ring-orange-400"
+                                    checked={form.ageVerificationRequired !== false}
+                                    onChange={(e) => setForm((prev) => ({ ...prev, ageVerificationRequired: e.target.checked }))}
+                                />
+                                <span>🔞 Flag Mandatory 18+ Age Check at POS / Waiter Terminal</span>
+                            </label>
+                            <label className="flex items-center gap-2.5 text-xs font-bold text-[color:var(--app-text)] cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="rounded text-orange-500 focus:ring-orange-400"
+                                    checked={form.isAvailable}
+                                    onChange={(e) => setForm((prev) => ({ ...prev, isAvailable: e.target.checked }))}
+                                />
+                                <span>Product Available in Stock & Active on Menu</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-3 justify-end pt-2">
+                        <button
+                            type="button"
+                            onClick={() => resetForm({ close: true })}
+                            className="theme-soft-button rounded-xl px-4 py-2 text-xs font-bold cursor-pointer"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={submitting}
+                            className="theme-button rounded-xl px-5 py-2 text-xs font-bold disabled:opacity-60 cursor-pointer"
+                        >
+                            {submitting ? "Saving Tobacco Product..." : editingId ? "Update Tobacco Product" : "Save Tobacco Product"}
+                        </button>
+                    </div>
+                </form>
+            )}
+
             {!loading && groupedItems.length > 0 && (
-                <div className="mt-5 flex flex-wrap items-center gap-2">
+                <div className="mt-4 flex flex-wrap items-center gap-2">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted)]">Categories</span>
                     {groupedItems.map(([category, categoryItems]) => (
                         <span
                             key={category}
-                            className="theme-table-time-pill rounded-full px-3 py-1 text-xs font-semibold"
+                            className="rounded-lg bg-black/5 dark:bg-white/10 px-2.5 py-0.5 text-xs font-semibold theme-muted flex items-center gap-1"
                         >
+                            {TOBACCO_CATEGORIES.some((c) => category.toLowerCase().includes(c.toLowerCase())) && (
+                                <span className="text-[10px]">🚬</span>
+                            )}
                             {category} ({categoryItems.length})
                         </span>
                     ))}
                 </div>
             )}
 
-            <div className="mt-6 space-y-5">
+            <div className="mt-5 space-y-4">
                 {!loading &&
                     groupedItems.map(([category, categoryItems]) => (
                         <section key={category} className="p-0">
-                            <div className="flex items-center justify-between gap-3">
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[color:var(--app-muted-strong)]">{category}</p>
+                            <div className="flex items-center justify-between gap-3 border-b border-[color:var(--app-border)]/30 pb-1">
+                                <div className="flex items-center gap-1.5">
+                                    {TOBACCO_CATEGORIES.some((c) => category.toLowerCase().includes(c.toLowerCase())) && (
+                                        <span className="text-xs">🚬</span>
+                                    )}
+                                    <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[color:var(--app-primary)]">{category}</p>
+                                </div>
                                 <p className="text-xs text-[color:var(--app-muted)]">{categoryItems.length} item(s)</p>
                             </div>
 
-                            <div className="mt-3 flex gap-3 overflow-x-auto pb-1 pr-1">
+                            <div className="mt-2.5 flex gap-3 overflow-x-auto pb-1 pr-1">
                                 {categoryItems.map((item) => (
                                     <article
                                         key={item.id}
-                                        className="relative w-[230px] shrink-0 overflow-visible rounded-xl border border-[color:var(--app-border)] bg-[color:var(--app-surface)]"
+                                        className="relative w-[220px] shrink-0 overflow-visible rounded-xl border border-[color:var(--app-border)]/30 p-1.5 transition hover:bg-black/5 dark:hover:bg-white/5"
                                     >
                                         <div className="relative">
+                                            {isTobaccoItem(item) && (
+                                                <div className="absolute left-2 top-2 z-10 rounded-lg bg-amber-950/90 border border-amber-500/60 px-2 py-0.5 text-[10px] font-black text-amber-300 backdrop-blur-sm shadow flex items-center gap-1">
+                                                    <span>🔞</span>
+                                                    <span>18+ TOBACCO</span>
+                                                </div>
+                                            )}
                                             <img
                                                 src={resolveImageUrl(item.image) || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c"}
                                                 alt={item.name}
@@ -499,7 +1107,7 @@ export default function MenuStudio() {
                                                                 setOpenActionMenuMeta(null);
                                                             }}
                                                             disabled={item.isAvailable}
-                                                            className="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-emerald-300 transition hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-45"
+                                                            className="w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-emerald-400 transition hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-45"
                                                         >
                                                             Enable
                                                         </button>
@@ -553,9 +1161,9 @@ export default function MenuStudio() {
                                                         </p>
                                                     )}
                                                     <span
-                                                        className={`mt-1 inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                                                        className={`mt-1 inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${
                                                             item.isAvailable
-                                                                ? "border-emerald-500/65 bg-emerald-500/20 text-emerald-200"
+                                                                ? "border-emerald-400 bg-emerald-500 text-white shadow-xs"
                                                                 : "border-slate-500/60 bg-slate-500/20 text-[color:var(--app-muted)]"
                                                         }`}
                                                     >
@@ -584,6 +1192,14 @@ export default function MenuStudio() {
                         : "No items match your search."}
                 </div>
             )}
-        </section>
+
+            <DigitalMenuQrModal
+                isOpen={showDigitalMenuModal}
+                onClose={() => setShowDigitalMenuModal(false)}
+                restaurantId={user?.restaurantId}
+                restaurantName={user?.restaurant?.name || "Tiffzy Restaurant"}
+                restaurantSlug={user?.restaurant?.slug || "tiffzy"}
+            />
+        </div>
     );
 }

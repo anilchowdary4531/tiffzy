@@ -1,5 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import prisma from "../config/prisma.js";
 
 /**
  * Validate Coupon Endpoint
@@ -10,7 +9,7 @@ export const validateCoupon = async (req, res) => {
     const { code, subtotal = 0, deliveryFee = 40, restaurantId } = req.body;
 
     if (!code) {
-      return res.status(400).json({ valid: false, message: 'Coupon code is required' });
+      return res.status(400).send({ valid: false, message: 'Coupon code is required' });
     }
 
     const cleanCode = code.trim().toUpperCase();
@@ -25,7 +24,7 @@ export const validateCoupon = async (req, res) => {
     if (mockCoupons[cleanCode]) {
       const c = mockCoupons[cleanCode];
       if (subtotal < c.minOrder) {
-        return res.status(400).json({
+        return res.status(400).send({
           valid: false,
           message: `Minimum order amount of ₹${c.minOrder} required for ${cleanCode}`
         });
@@ -40,7 +39,7 @@ export const validateCoupon = async (req, res) => {
         discount = deliveryFee;
       }
 
-      return res.json({
+      return res.send({
         valid: true,
         code: cleanCode,
         type: c.type,
@@ -49,10 +48,10 @@ export const validateCoupon = async (req, res) => {
       });
     }
 
-    return res.status(404).json({ valid: false, message: 'Invalid or expired coupon code' });
+    return res.status(404).send({ valid: false, message: 'Invalid or expired coupon code' });
   } catch (error) {
     console.error('Validate Coupon Error:', error);
-    return res.status(500).json({ valid: false, message: 'Server error validating coupon' });
+    return res.status(500).send({ valid: false, message: 'Server error validating coupon' });
   }
 };
 
@@ -65,7 +64,7 @@ export const createCoupon = async (req, res) => {
     const { code, type, discountValue, minOrderAmount, maxDiscount, expiryDays = 30 } = req.body;
 
     if (!code || !type || !discountValue) {
-      return res.status(400).json({ success: false, message: 'Code, type, and discountValue are required' });
+      return res.status(400).send({ success: false, message: 'Code, type, and discountValue are required' });
     }
 
     const cleanCode = code.trim().toUpperCase();
@@ -82,14 +81,14 @@ export const createCoupon = async (req, res) => {
       isActive: true
     };
 
-    return res.json({
+    return res.send({
       success: true,
       message: `Coupon ${cleanCode} created successfully`,
       coupon: newCoupon
     });
   } catch (error) {
     console.error('Create Coupon Error:', error);
-    return res.status(500).json({ success: false, message: 'Server error creating coupon' });
+    return res.status(500).send({ success: false, message: 'Server error creating coupon' });
   }
 };
 
@@ -97,7 +96,7 @@ export const createCoupon = async (req, res) => {
  * Get Restaurant Coupons Endpoint
  * GET /api/coupons
  */
-export const getCoupons = async (req, res) => {
+export const getCoupons = async (req, reply) => {
   try {
     const defaultCoupons = [
       { id: 1, code: 'TIFFZY50', type: 'FLAT', discountValue: 50, minOrderAmount: 249, maxDiscount: 50, isActive: true },
@@ -105,8 +104,8 @@ export const getCoupons = async (req, res) => {
       { id: 3, code: 'FREEDEL', type: 'FREE_DELIVERY', discountValue: 40, minOrderAmount: 149, maxDiscount: 40, isActive: true }
     ];
 
-    return res.json({ coupons: defaultCoupons });
+    return reply.send({ coupons: defaultCoupons });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error fetching coupons' });
+    return reply.code(500).send({ success: false, message: 'Server error fetching coupons' });
   }
 };

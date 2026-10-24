@@ -1,772 +1,1113 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { Link, useParams, useNavigate, useLocation } from "react-router-dom";
 import {
-    CheckCircle2,
-    ChefHat,
-    LoaderCircle,
-    RefreshCw,
-    Sparkles,
-    History,
-    UtensilsCrossed,
+  ArrowLeft,
+  ChefHat,
+  Clock,
+  Flame,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  UtensilsCrossed,
+  Sparkles,
+  ShieldAlert,
+  Inbox,
+  Check,
+  Play,
+  Layers,
+  History,
+  Calendar,
+  Search,
+  X,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useStaffSocket } from "../context/StaffSocketContext";
-import { resolveEffectiveStaffRole } from "../utils/staffRole";
-import useKitchenLiveBoardData from "../hooks/useKitchenLiveBoardData";
-import {
-    buildKitchenTicketRows,
-    appendKitchenAssignmentHistory,
-    createKitchenAssignmentHistoryEntry,
-    formatKitchenAge,
-    formatKitchenMoney,
-    getKitchenAssignmentHistoryStorageKey,
-    getKitchenAssignmentsStorageKey,
-    getKitchenMinutesSince,
-    isLiveKitchenStatus,
-    readKitchenAssignmentHistory,
-    readKitchenAssignments,
-    writeKitchenAssignments,
-} from "../utils/kitchenBoardStorage";
+import { api } from "../utils/apiClient";
 import { showToast } from "../utils/toast";
 
-const CHEF_PALETTES = [
-    { avatar: "#f4d3a8", avatarInk: "#6f3e17", chipBg: "rgba(201, 108, 29, 0.14)", chipInk: "#7a4115", ring: "rgba(201, 108, 29, 0.34)" },
-    { avatar: "#edd6b8", avatarInk: "#6b4020", chipBg: "rgba(176, 112, 62, 0.14)", chipInk: "#74431d", ring: "rgba(176, 112, 62, 0.34)" },
-    { avatar: "#f0c6a1", avatarInk: "#7a4118", chipBg: "rgba(194, 85, 24, 0.14)", chipInk: "#803d12", ring: "rgba(194, 85, 24, 0.34)" },
-    { avatar: "#f7dfb8", avatarInk: "#6d4518", chipBg: "rgba(141, 102, 42, 0.14)", chipInk: "#744b1d", ring: "rgba(141, 102, 42, 0.34)" },
-    { avatar: "#ebd0a0", avatarInk: "#6a3f11", chipBg: "rgba(169, 113, 48, 0.14)", chipInk: "#744315", ring: "rgba(169, 113, 48, 0.34)" },
-    { avatar: "#f3dcbc", avatarInk: "#69421b", chipBg: "rgba(214, 164, 55, 0.16)", chipInk: "#795514", ring: "rgba(214, 164, 55, 0.34)" },
-];
-
-const ACTION_STYLES = {
-    ASSIGNED: {
-        backgroundColor: "rgba(34, 197, 94, 0.14)",
-        borderColor: "rgba(34, 197, 94, 0.24)",
-        color: "#27623c",
-    },
-    REASSIGNED: {
-        backgroundColor: "rgba(249, 115, 22, 0.14)",
-        borderColor: "rgba(249, 115, 22, 0.24)",
-        color: "#7d4212",
-    },
-    UNASSIGNED: {
-        backgroundColor: "rgba(148, 163, 184, 0.16)",
-        borderColor: "rgba(148, 163, 184, 0.26)",
-        color: "#475569",
-    },
-    COMPLETED: {
-        backgroundColor: "rgba(16, 185, 129, 0.14)",
-        borderColor: "rgba(16, 185, 129, 0.28)",
-        color: "#0f766e",
-    },
-};
-
-const getActionLabel = (entry) => {
-    const action = String(entry?.action || "ASSIGNED").toUpperCase();
-    if (action === "REASSIGNED") return "Reassigned";
-    if (action === "UNASSIGNED") return "Unassigned";
-    if (action === "COMPLETED") return "Completed";
-    return "Assigned";
-};
-
-const getActionStyle = (entry) => {
-    const action = String(entry?.action || "ASSIGNED").toUpperCase();
-    return ACTION_STYLES[action] || ACTION_STYLES.ASSIGNED;
-};
-
-const getTimeLabel = (value) => {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return "-";
-    return d.toLocaleString([], {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-};
-
-const getRelativeLabel = (timestamp) => {
-    const age = formatKitchenAge(getKitchenMinutesSince(timestamp));
-    if (!age || age === "-") return "-";
-    return age === "just now" ? age : `${age} ago`;
-};
-
-function Metric({ label, value, hint }) {
-    return (
-        <div className="min-w-0 text-left">
-            <dt className="text-[10px] font-bold uppercase tracking-[0.28em] text-[var(--kitchen-muted)]">
-                {label}
-            </dt>
-            <dd className="mt-1 font-serif text-2xl font-bold leading-none text-[var(--kitchen-ink)]">
-                {value}
-            </dd>
-            {hint ? <p className="mt-1 text-xs text-[var(--kitchen-muted)]">{hint}</p> : null}
-        </div>
-    );
-}
-
-function TicketCard({
-    ticket,
-    chef,
-    chefLabel,
-    onAction,
-    actionLabel = "Complete",
-    actionIcon = <CheckCircle2 size={14} />,
-    actionStyle,
-    actionDisabled = false,
-    actionTitle,
-}) {
-    const assignedStyle = chef?.palette
-        ? {
-              backgroundColor: chef.palette.chipBg,
-              borderColor: chef.palette.ring,
-              color: chef.palette.chipInk,
-          }
-        : {
-              backgroundColor: "rgba(255,255,255,0.5)",
-              borderColor: "rgba(95, 61, 31, 0.16)",
-              color: "var(--kitchen-muted)",
-          };
-
-    return (
-        <article className="rounded-[24px] border border-[rgba(95,61,31,0.12)] bg-[rgba(255,255,255,0.34)] p-4 shadow-[0_10px_22px_rgba(74,43,19,0.04)]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="truncate text-[15px] font-semibold leading-tight text-[var(--kitchen-ink)]">
-                        {ticket.itemName}
-                    </p>
-                    <p className="mt-1 text-[12px] text-[var(--kitchen-muted)]">
-                        {ticket.qty} plate{ticket.qty === 1 ? "" : "s"} - {ticket.orderRef} - {ticket.ageText}
-                    </p>
-                    <p className="mt-1 text-[11px] uppercase tracking-[0.22em] text-[var(--kitchen-muted)]">
-                        {ticket.orderLabel || "Kitchen ticket"} -{" "}
-                        {String(ticket.orderStatus || "").replace(/_/g, " ")}
-                    </p>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-2">
-                    <span className="kitchen-paper-chip" style={assignedStyle}>
-                        {chefLabel || chef?.name || "Chef"}
-                    </span>
-                </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm font-semibold tabular-nums text-[var(--kitchen-ink)]">
-                    {formatKitchenMoney(ticket.lineTotal)}
-                </p>
-
-                <button
-                    type="button"
-                    onClick={() => onAction?.(ticket.itemKey)}
-                    disabled={actionDisabled}
-                    className="kitchen-paper-action"
-                    style={
-                        actionStyle || {
-                            backgroundColor: "rgba(16, 185, 129, 0.12)",
-                            borderColor: "rgba(16, 185, 129, 0.24)",
-                            color: "#0f766e",
-                        }
-                    }
-                    title={actionTitle}
-                >
-                    {actionIcon}
-                    {actionLabel}
-                </button>
-            </div>
-
-            {ticket.notes ? <p className="mt-2 text-sm italic text-[var(--kitchen-muted)]">{ticket.notes}</p> : null}
-        </article>
-    );
-}
-
-function HistoryCard({ entry, chef }) {
-    const actionStyle = getActionStyle(entry);
-    const actionLabel = getActionLabel(entry);
-
-    return (
-        <article className="rounded-[24px] border border-[rgba(95,61,31,0.12)] bg-[rgba(255,255,255,0.34)] p-4 shadow-[0_10px_22px_rgba(74,43,19,0.04)]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="font-serif text-xl font-bold text-[var(--kitchen-ink)]">
-                        {entry.itemName || "Item"}
-                    </p>
-                    <p className="mt-1 text-sm text-[var(--kitchen-muted)]">
-                        {entry.orderRef || "Order"}
-                        {entry.orderLabel ? ` - ${entry.orderLabel}` : ""}
-                        {entry.qty ? ` - ${entry.qty} plate${Number(entry.qty) === 1 ? "" : "s"}` : ""}
-                    </p>
-                </div>
-
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <span className="kitchen-paper-chip" style={actionStyle}>
-                        {actionLabel}
-                    </span>
-                    <span className="kitchen-paper-chip">{entry.chefName || chef?.name || "Chef"}</span>
-                </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-[var(--kitchen-muted)]">
-                <span>{getTimeLabel(entry.timestamp)}</span>
-                <span>-</span>
-                <span>{getRelativeLabel(entry.timestamp)}</span>
-                {entry.orderStatus ? (
-                    <>
-                        <span>-</span>
-                        <span>{String(entry.orderStatus).replace(/_/g, " ")}</span>
-                    </>
-                ) : null}
-            </div>
-
-            {entry.previousChefName ? (
-                <p className="mt-3 text-sm text-[var(--kitchen-muted)]">
-                    Previous chef: {entry.previousChefName}
-                </p>
-            ) : null}
-
-            {entry.note ? <p className="mt-2 text-sm italic text-[var(--kitchen-muted)]">{entry.note}</p> : null}
-        </article>
-    );
-}
-
 export default function KitchenChefDetail() {
-    const { chefId: chefIdParam } = useParams();
-    const targetChefId = String(chefIdParam || "").trim();
-    const { user } = useAuth();
-    const { socket, connected, error: socketError } = useStaffSocket();
+  const { chefId } = useParams();
+  const { user } = useAuth();
+  const { socket } = useStaffSocket();
+  const navigate = useNavigate();
+  const location = useLocation();
 
-    const restaurantId = Number(user?.restaurantId || 0);
-    const restaurantName = String(user?.restaurant?.name || "Restaurant").trim() || "Restaurant";
-    const effectiveRole = resolveEffectiveStaffRole(user?.role, user?.designation);
+  const restaurantId = Number(
+    user?.restaurantId ||
+    user?.restaurant?.id ||
+    user?.restaurant_id ||
+    localStorage.getItem("restaurantId") ||
+    1
+  );
 
-    const [assignments, setAssignments] = useState({});
-    const [assignmentsReady, setAssignmentsReady] = useState(false);
-    const [historyEntries, setHistoryEntries] = useState([]);
-    const [historyReady, setHistoryReady] = useState(false);
-    const [historyOpen, setHistoryOpen] = useState(false);
+  // Security Check: line chef can only access their own station
+  const actorRole = String(user?.role || "").toUpperCase();
+  const actorDesignation = String(user?.designation || "").toLowerCase();
+  const isPrivileged =
+    actorRole === "OWNER" ||
+    actorRole === "MANAGER" ||
+    actorRole === "SUPER_ADMIN" ||
+    actorDesignation.includes("senior chef") ||
+    actorDesignation.includes("head chef") ||
+    actorDesignation.includes("executive chef");
 
-    const { orders, staffUsers, ordersLoading, staffLoading, refreshing, ordersError, staffError, lastSyncAt, refreshBoard } =
-        useKitchenLiveBoardData(restaurantId, socket);
+  const isAuthorized = isPrivileged || Number(user?.id) === Number(chefId);
 
-    useEffect(() => {
-        if (!restaurantId) {
-            setAssignments({});
-            setAssignmentsReady(false);
-            setHistoryEntries([]);
-            setHistoryReady(false);
-            return undefined;
+  // View Mode: "QUEUE" | "HISTORY"
+  const isHistoryPath = location.pathname.includes("/history") || new URLSearchParams(location.search).get("tab") === "history";
+  const [viewMode, setViewMode] = useState(isHistoryPath ? "HISTORY" : "QUEUE");
+
+  // Keep viewMode synced if URL changes
+  useEffect(() => {
+    if (location.pathname.includes("/history") || new URLSearchParams(location.search).get("tab") === "history") {
+      setViewMode("HISTORY");
+    } else {
+      setViewMode("QUEUE");
+    }
+  }, [location.pathname, location.search]);
+
+  // Queue State
+  const [assignedItems, setAssignedItems] = useState([]);
+  const [availableWork, setAvailableWork] = useState({ mode: "DISPATCHER", scope: "ITEMS", availableItems: [], availableKots: [] });
+  const [kitchenConfig, setKitchenConfig] = useState({ mode: "DISPATCHER", scope: "ITEMS" });
+  const [chefInfo, setChefInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [actionInProgress, setActionInProgress] = useState({});
+  const [errorMsg, setErrorMsg] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+
+  // History State
+  const [historyItems, setHistoryItems] = useState([]);
+  const [groupedHistory, setGroupedHistory] = useState([]);
+  const [historyPagination, setHistoryPagination] = useState({ page: 1, limit: 20, totalCount: 0, totalPages: 1, hasMore: false });
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState(false);
+  const [historyDateRange, setHistoryDateRange] = useState("today");
+  const [customDate, setCustomDate] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+  const [historySearchInput, setHistorySearchInput] = useState("");
+  const searchTimeoutRef = useRef(null);
+
+  // Fetch Chef Info, Config, Assigned Items and Available Work
+  const loadStationData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setErrorMsg("");
+
+    try {
+      // 1. Fetch Config
+      const configRes = await api.get(`/owner/${restaurantId}/kitchen/config`);
+      const cfg = configRes.data?.ok ? configRes.data : { mode: "DISPATCHER", scope: "ITEMS" };
+      setKitchenConfig(cfg);
+
+      // 2. Fetch Assigned Items for this Chef
+      const assignedRes = await api.get(`/owner/${restaurantId}/kitchen/chef/${chefId}/assigned-items`);
+      if (assignedRes.data?.ok) {
+        setAssignedItems(assignedRes.data.items || []);
+      }
+
+      // 3. Fetch Available Work if SELF_PICK
+      if (cfg.mode === "SELF_PICK") {
+        const availRes = await api.get(`/owner/${restaurantId}/kitchen/available-work`);
+        if (availRes.data?.ok) {
+          setAvailableWork(availRes.data);
         }
+      } else {
+        setAvailableWork({ mode: "DISPATCHER", scope: cfg.scope, availableItems: [], availableKots: [] });
+      }
 
-        setAssignments(readKitchenAssignments(restaurantId));
-        setHistoryEntries(readKitchenAssignmentHistory(restaurantId));
-        setAssignmentsReady(true);
-        setHistoryReady(true);
-
-        const onStorage = (event) => {
-            if (event.key === getKitchenAssignmentsStorageKey(restaurantId)) {
-                setAssignments(readKitchenAssignments(restaurantId));
-            }
-            if (event.key === getKitchenAssignmentHistoryStorageKey(restaurantId)) {
-                setHistoryEntries(readKitchenAssignmentHistory(restaurantId));
-            }
-        };
-
-        window.addEventListener("storage", onStorage);
-        return () => window.removeEventListener("storage", onStorage);
-    }, [restaurantId]);
-
-    useEffect(() => {
-        if (!assignmentsReady || !restaurantId) return;
-        writeKitchenAssignments(restaurantId, assignments);
-    }, [assignments, assignmentsReady, restaurantId]);
-
-    const activeOrders = useMemo(() => {
-        const list = Array.isArray(orders) ? orders.filter((order) => isLiveKitchenStatus(order?.status)) : [];
-        return list.sort(
-            (a, b) => new Date(a?.createdAt || 0).getTime() - new Date(b?.createdAt || 0).getTime()
-        );
-    }, [orders]);
-
-    const chefs = useMemo(() => {
-        const paletteByIndex = (index) => CHEF_PALETTES[index % CHEF_PALETTES.length];
-
-        return (Array.isArray(staffUsers) ? staffUsers : [])
-            .filter((staffUser) => String(staffUser?.role || "").toUpperCase() === "CHEF" && staffUser?.isActive !== false)
-            .map((staffUser, index) => ({
-                ...staffUser,
-                id: String(staffUser?.id || ""),
-                palette: paletteByIndex(index),
-            }))
-            .sort((a, b) => {
-                const aSenior = /SENIOR/i.test(String(a?.designation || ""));
-                const bSenior = /SENIOR/i.test(String(b?.designation || ""));
-                if (aSenior !== bSenior) return aSenior ? -1 : 1;
-                return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, {
-                    sensitivity: "base",
-                });
-            });
-    }, [staffUsers]);
-
-    const chefById = useMemo(() => {
-        const map = new Map();
-        chefs.forEach((chef) => {
-            map.set(String(chef.id || ""), chef);
+      // 4. Fetch Chef metadata from staff list or user
+      if (Number(user?.id) === Number(chefId)) {
+        setChefInfo({
+          id: user.id,
+          name: user.name || "Chef",
+          designation: user.designation || "Chef",
         });
-        return map;
-    }, [chefs]);
-
-    const currentChef = chefById.get(targetChefId) || null;
-
-    const ticketRows = useMemo(() => buildKitchenTicketRows(activeOrders), [activeOrders]);
-
-    const assignmentsPruned = useMemo(() => {
-        const next = {};
-        ticketRows.forEach((ticket) => {
-            const chefId = String(assignments?.[ticket.itemKey] || "").trim();
-            if (chefId && chefById.has(chefId)) {
-                next[ticket.itemKey] = chefId;
-            }
-        });
-        return next;
-    }, [assignments, chefById, ticketRows]);
-
-    useEffect(() => {
-        if (!assignmentsReady || ordersLoading || staffLoading) return;
-        if (JSON.stringify(assignments) === JSON.stringify(assignmentsPruned)) return;
-        setAssignments(assignmentsPruned);
-    }, [assignments, assignmentsPruned, assignmentsReady, ordersLoading, staffLoading]);
-
-    const currentTickets = useMemo(() => {
-        if (!targetChefId) return [];
-        return ticketRows.filter((ticket) => String(assignmentsPruned?.[ticket.itemKey] || "").trim() === targetChefId);
-    }, [assignmentsPruned, targetChefId, ticketRows]);
-
-    const availableTickets = useMemo(() => {
-        return ticketRows.filter((ticket) => !String(assignmentsPruned?.[ticket.itemKey] || "").trim());
-    }, [assignmentsPruned, ticketRows]);
-
-    const handleCompleteTicket = useCallback(
-        (ticketKey) => {
-            const normalizedTicketKey = String(ticketKey || "").trim();
-            if (!normalizedTicketKey || !currentChef) return;
-
-            const ticket = currentTickets.find((row) => row.itemKey === normalizedTicketKey);
-            if (!ticket) return;
-
-            const historyEntry = createKitchenAssignmentHistoryEntry({
-                action: "COMPLETED",
-                item: ticket,
-                chef: currentChef,
-                note: "Marked complete",
-            });
-
-            setAssignments((prev) => {
-                const next = { ...(prev || {}) };
-                delete next[normalizedTicketKey];
-                return next;
-            });
-
-            const storedEntry = appendKitchenAssignmentHistory(restaurantId, historyEntry);
-            if (storedEntry) {
-                setHistoryEntries((prev) => [...prev, storedEntry]);
-            }
-
-            showToast({
-                title: "Item completed",
-                message: `${ticket.itemName} from ${ticket.orderRef} was marked complete.`,
-                variant: "success",
-                durationMs: 2000,
-            });
-        },
-        [currentChef, currentTickets, restaurantId]
-    );
-
-    const handlePickTicket = useCallback(
-        (ticketKey) => {
-            const normalizedTicketKey = String(ticketKey || "").trim();
-            if (!normalizedTicketKey || !currentChef || !targetChefId) return;
-
-            const ticket = ticketRows.find((row) => row.itemKey === normalizedTicketKey);
-            if (!ticket) return;
-
-            const existingChefId = String(assignmentsPruned?.[normalizedTicketKey] || "").trim();
-            if (existingChefId && existingChefId !== targetChefId) {
-                const existingChef = chefById.get(existingChefId);
-                showToast({
-                    title: "Already taken",
-                    message: `${ticket.itemName} is already assigned to ${existingChef?.name || "another chef"}.`,
-                    variant: "error",
-                    durationMs: 2200,
-                });
-                return;
-            }
-
-            const nextAssignments = {
-                ...(assignments || {}),
-                [normalizedTicketKey]: targetChefId,
-            };
-
-            setAssignments(nextAssignments);
-
-            const storedEntry = appendKitchenAssignmentHistory(
-                restaurantId,
-                createKitchenAssignmentHistoryEntry({
-                    action: "ASSIGNED",
-                    item: ticket,
-                    chef: currentChef,
-                    note: "Picked from live orders",
-                })
-            );
-            if (storedEntry) {
-                setHistoryEntries((prev) => [...prev, storedEntry]);
-            }
-
-            showToast({
-                title: "Order picked",
-                message: `${ticket.itemName} from ${ticket.orderRef} is now yours.`,
-                variant: "success",
-                durationMs: 2000,
-            });
-        },
-        [assignments, assignmentsPruned, chefById, currentChef, restaurantId, targetChefId, ticketRows]
-    );
-
-    const relevantHistory = useMemo(() => {
-        if (!targetChefId) return [];
-        return historyEntries
-            .filter((entry) => String(entry?.chefId || "") === targetChefId || String(entry?.previousChefId || "") === targetChefId)
-            .slice()
-            .sort((left, right) => new Date(right?.timestamp || 0).getTime() - new Date(left?.timestamp || 0).getTime());
-    }, [historyEntries, targetChefId]);
-
-    const metrics = useMemo(() => {
-        const liveOrdersCount = activeOrders.length;
-        const oldestMinutes = currentTickets.reduce((max, ticket) => {
-            const minutes = getKitchenMinutesSince(ticket.createdAt);
-            if (minutes === null) return max;
-            return Math.max(max, minutes);
-        }, 0);
-        const pastEvents = relevantHistory.length;
-
-        return {
-            liveOrdersCount,
-            pastEvents,
-            oldestMinutes,
-        };
-    }, [activeOrders, currentTickets, relevantHistory]);
-
-    const pageTitle = currentChef?.name || "Chef";
-    const pageDesignation = String(currentChef?.designation || "Chef").trim() || "Chef";
-    const isSenior = /SENIOR/i.test(pageDesignation);
-
-    useEffect(() => {
-        if (!historyOpen) return undefined;
-
-        const onKeyDown = (event) => {
-            if (event.key === "Escape") {
-                setHistoryOpen(false);
-            }
-        };
-
-        const previousOverflow = typeof document !== "undefined" ? document.body.style.overflow : "";
-        if (typeof document !== "undefined") {
-            document.body.style.overflow = "hidden";
+      } else {
+        try {
+          const staffRes = await api.get(`/owner/${restaurantId}/staff`);
+          const staffList = Array.isArray(staffRes.data?.staff) ? staffRes.data.staff : (Array.isArray(staffRes.data) ? staffRes.data : []);
+          const target = staffList.find((s) => Number(s.id) === Number(chefId));
+          if (target) {
+            setChefInfo(target);
+          } else {
+            setChefInfo({ id: chefId, name: `Chef #${chefId}`, designation: "Chef" });
+          }
+        } catch {
+          setChefInfo({ id: chefId, name: `Chef #${chefId}`, designation: "Chef" });
         }
+      }
+    } catch (err) {
+      console.error("[KitchenChefDetail] Load station error:", err);
+      if (err.response?.status === 403) {
+        setErrorMsg("Access denied. You can only access your own station.");
+      } else {
+        setErrorMsg(err.response?.data?.message || err?.message || "Failed to load chef station.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [restaurantId, chefId, user]);
 
-        window.addEventListener("keydown", onKeyDown);
-        return () => {
-            window.removeEventListener("keydown", onKeyDown);
-            if (typeof document !== "undefined") {
-                document.body.style.overflow = previousOverflow;
-            }
-        };
-    }, [historyOpen]);
-
-    if (!restaurantId) {
-        return (
-            <div className="theme-page kitchen-paper-page min-h-screen px-4 py-4 md:px-6 md:py-6">
-                <div className="kitchen-paper-sheet mx-auto flex min-h-[calc(100vh-2rem)] max-w-[1600px] flex-col rounded-[32px] px-4 py-5 md:px-8 md:py-7">
-                    <p className="text-sm text-[var(--kitchen-muted)]">Kitchen context is missing.</p>
-                </div>
-            </div>
-        );
+  // Fetch Chef History Data
+  const loadHistoryData = useCallback(async (pageToLoad = 1, silent = false) => {
+    if (pageToLoad === 1 && !silent) {
+      setLoadingHistory(true);
+    } else if (pageToLoad > 1) {
+      setLoadingMoreHistory(true);
     }
 
+    try {
+      const params = {
+        page: pageToLoad,
+        limit: 20,
+        range: historyDateRange,
+      };
+
+      if (historyDateRange === "custom" && customDate) {
+        params.date = customDate;
+      }
+
+      if (historySearch.trim()) {
+        params.search = historySearch.trim();
+      }
+
+      const res = await api.get(`/owner/${restaurantId}/kitchen/chef/${chefId}/history`, { params });
+      if (res.data?.ok) {
+        const fetchedItems = res.data.items || [];
+        const fetchedGrouped = res.data.groupedByDate || [];
+        const pagination = res.data.pagination || { page: 1, limit: 20, totalCount: fetchedItems.length, totalPages: 1, hasMore: false };
+
+        if (pageToLoad === 1) {
+          setHistoryItems(fetchedItems);
+          setGroupedHistory(fetchedGrouped);
+        } else {
+          setHistoryItems((prev) => {
+            const existingIds = new Set(prev.map((p) => p.id));
+            const newUnique = fetchedItems.filter((it) => !existingIds.has(it.id));
+            return [...prev, ...newUnique];
+          });
+
+          setGroupedHistory((prevGrouped) => {
+            const groupMap = new Map();
+            for (const g of prevGrouped) {
+              groupMap.set(g.dateKey, {
+                dateKey: g.dateKey,
+                dateHeading: g.dateHeading,
+                items: [...g.items],
+              });
+            }
+            for (const it of fetchedItems) {
+              if (!groupMap.has(it.dateKey)) {
+                groupMap.set(it.dateKey, {
+                  dateKey: it.dateKey,
+                  dateHeading: it.dateHeading,
+                  items: [],
+                });
+              }
+              const target = groupMap.get(it.dateKey);
+              if (!target.items.some((x) => x.id === it.id)) {
+                target.items.push(it);
+              }
+            }
+            return Array.from(groupMap.values());
+          });
+        }
+
+        setHistoryPagination(pagination);
+      }
+    } catch (err) {
+      console.error("[KitchenChefDetail] Load history error:", err);
+      if (err.response?.status === 403) {
+        setErrorMsg("Access denied. You can only access your own history.");
+      } else {
+        showToast(err.response?.data?.message || "Failed to load chef history", "error");
+      }
+    } finally {
+      setLoadingHistory(false);
+      setLoadingMoreHistory(false);
+    }
+  }, [restaurantId, chefId, historyDateRange, customDate, historySearch]);
+
+  // Initial Data Load
+  useEffect(() => {
+    if (isAuthorized) {
+      loadStationData();
+      loadHistoryData(1);
+    }
+  }, [loadStationData, loadHistoryData, isAuthorized]);
+
+  // Realtime Sync via Socket.IO
+  useEffect(() => {
+    if (!socket || !isAuthorized) return;
+
+    const handleKitchenUpdate = () => {
+      loadStationData(true);
+      loadHistoryData(1, true);
+    };
+
+    socket.on("kitchen:config_updated", handleKitchenUpdate);
+    socket.on("kitchen:item_assigned", handleKitchenUpdate);
+    socket.on("kitchen:item_reassigned", handleKitchenUpdate);
+    socket.on("kitchen:item_self_picked", handleKitchenUpdate);
+    socket.on("kitchen:item_status_updated", handleKitchenUpdate);
+    socket.on("kot:item_updated", handleKitchenUpdate);
+    socket.on("kot:status_updated", handleKitchenUpdate);
+
+    return () => {
+      socket.off("kitchen:config_updated", handleKitchenUpdate);
+      socket.off("kitchen:item_assigned", handleKitchenUpdate);
+      socket.off("kitchen:item_reassigned", handleKitchenUpdate);
+      socket.off("kitchen:item_self_picked", handleKitchenUpdate);
+      socket.off("kitchen:item_status_updated", handleKitchenUpdate);
+      socket.off("kot:item_updated", handleKitchenUpdate);
+      socket.off("kot:status_updated", handleKitchenUpdate);
+    };
+  }, [socket, isAuthorized, loadStationData, loadHistoryData]);
+
+  // Search input debouncer
+  const handleSearchChange = (val) => {
+    setHistorySearchInput(val);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      setHistorySearch(val);
+    }, 350);
+  };
+
+  const handleClearSearch = () => {
+    setHistorySearchInput("");
+    setHistorySearch("");
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  };
+
+  const handleDateFilterChange = (rangeId) => {
+    setHistoryDateRange(rangeId);
+  };
+
+  const handleCustomDateChange = (val) => {
+    setCustomDate(val);
+  };
+
+  const handleLoadMoreHistory = () => {
+    if (historyPagination.hasMore && !loadingMoreHistory) {
+      loadHistoryData(historyPagination.page + 1);
+    }
+  };
+
+  // Lifecycle Action: START PREPARING
+  const handleStartPreparing = async (item) => {
+    setActionInProgress((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      await api.put(`/owner/${restaurantId}/kitchen/items/${item.id}/status`, {
+        status: "PREPARING",
+      });
+      showToast(`Started preparing: ${item.name}`, "success");
+      await loadStationData(true);
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to update item", "error");
+    } finally {
+      setActionInProgress((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  // Lifecycle Action: MARK READY
+  const handleMarkReady = async (item) => {
+    setActionInProgress((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      await api.put(`/owner/${restaurantId}/kitchen/items/${item.id}/status`, {
+        status: "READY",
+      });
+      showToast(`Marked ready: ${item.name}`, "success");
+      await loadStationData(true);
+      await loadHistoryData(1, true);
+    } catch (err) {
+      showToast(err.response?.data?.message || "Failed to update item", "error");
+    } finally {
+      setActionInProgress((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  // Self-Pick Action: CLAIM ITEM
+  const handleClaimItem = async (item) => {
+    setActionInProgress((prev) => ({ ...prev, [`claim_item_${item.id}`]: true }));
+    try {
+      const res = await api.post(`/owner/${restaurantId}/kitchen/items/${item.id}/self-pick`);
+      if (res.data?.ok) {
+        showToast(`Claimed: ${item.name}`, "success");
+        await loadStationData(true);
+      }
+    } catch (err) {
+      if (err.response?.status === 409) {
+        showToast("This item was just claimed by another chef.", "warning");
+      } else {
+        showToast(err.response?.data?.message || "Failed to claim item", "error");
+      }
+      await loadStationData(true);
+    } finally {
+      setActionInProgress((prev) => ({ ...prev, [`claim_item_${item.id}`]: false }));
+    }
+  };
+
+  // Self-Pick Action: CLAIM KOT
+  const handleClaimKot = async (kot) => {
+    setActionInProgress((prev) => ({ ...prev, [`claim_kot_${kot.id}`]: true }));
+    try {
+      const res = await api.post(`/owner/${restaurantId}/kitchen/kots/${kot.id}/self-pick`);
+      if (res.data?.ok) {
+        showToast(`Claimed KOT #${kot.kotNumber || kot.id} (${res.data.claimedCount} items)`, "success");
+        await loadStationData(true);
+      }
+    } catch (err) {
+      if (err.response?.status === 409) {
+        showToast("All items in this KOT are already claimed.", "warning");
+      } else {
+        showToast(err.response?.data?.message || "Failed to claim KOT", "error");
+      }
+      await loadStationData(true);
+    } finally {
+      setActionInProgress((prev) => ({ ...prev, [`claim_kot_${kot.id}`]: false }));
+    }
+  };
+
+  // Access Denied screen if line chef attempts to access another chef's station
+  if (!isAuthorized) {
     return (
-        <div className="theme-page kitchen-paper-page min-h-screen px-4 py-4 md:px-6 md:py-6 lg:overflow-hidden">
-            <div className="kitchen-paper-sheet mx-auto flex min-h-[calc(100vh-2rem)] max-w-[1600px] flex-col rounded-[32px] px-4 py-5 md:px-8 md:py-7 lg:h-[calc(100vh-3rem)] lg:max-h-[calc(100vh-3rem)] lg:overflow-hidden">
-                <header className="flex flex-col gap-6">
-                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(180px,0.65fr)_minmax(280px,0.9fr)] lg:items-start lg:gap-6">
-                        <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-6 md:grid-cols-3">
-                            <Metric label="Live orders" value={metrics.liveOrdersCount} hint="Orders currently on the board" />
-                            <Metric label="Past" value={metrics.pastEvents} hint="Assignment history events" />
-                            <Metric label="Oldest" value={formatKitchenAge(metrics.oldestMinutes)} hint="Longest waiting current item" />
-                        </dl>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-2xl border border-red-200 dark:border-red-900/60 p-6 shadow-xl text-center">
+          <div className="w-14 h-14 bg-red-100 dark:bg-red-950/60 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <ShieldAlert size={28} />
+          </div>
+          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-2">
+            Access Denied
+          </h1>
+          <p className="text-xs text-slate-600 dark:text-slate-400 mb-6">
+            You can only access your own assigned chef station.
+          </p>
+          <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/40 rounded-xl text-xs text-red-700 dark:text-red-300 font-mono mb-4 text-left">
+            <div>Target Station: #{chefId}</div>
+            <div>Authenticated User: #{user?.id} ({user?.name || "Staff"})</div>
+            <div>Role: {user?.role} • {user?.designation || "Staff"}</div>
+          </div>
+          <div className="flex gap-2 justify-center">
+            {user?.id && (
+              <Link
+                to={`/kitchen/chef/${user.id}`}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-xs font-bold transition shadow-md"
+              >
+                Go to My Station (#{user.id})
+              </Link>
+            )}
+            <Link
+              to="/"
+              className="px-4 py-2 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+            >
+              Back to Home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-                        <div className="flex flex-col gap-3 self-start text-center">
-                            <h1 className="font-serif text-2xl font-bold leading-[0.96] text-[var(--kitchen-ink)] md:text-3xl lg:text-4xl">
-                                {pageTitle}
-                            </h1>
-                            <div className="flex flex-wrap items-center justify-center gap-2">
-                                <span
-                                    className="kitchen-paper-chip"
-                                    style={{
-                                        backgroundColor: currentChef?.palette?.chipBg || "rgba(255,255,255,0.5)",
-                                        borderColor: currentChef?.palette?.ring || "rgba(95, 61, 31, 0.18)",
-                                        color: currentChef?.palette?.chipInk || "var(--kitchen-ink)",
-                                    }}
-                                >
-                                    {pageDesignation}
-                                </span>
-                                {isSenior ? (
-                                    <span className="kitchen-paper-chip">Senior</span>
-                                ) : null}
-                                {currentChef?.id ? (
-                                    <Link
-                                        to={`/staff/profile/${encodeURIComponent(String(currentChef.id))}`}
-                                        className="kitchen-paper-chip"
-                                    >
-                                        Chef profile
-                                    </Link>
-                                ) : (
-                                    <span className="kitchen-paper-chip">{pageTitle ? "Chef profile" : "Chef"}</span>
-                                )}
-                            </div>
-                        </div>
+  // Active metrics
+  const activeItems = assignedItems.filter((it) => it.status !== "READY" && it.status !== "CANCELLED");
+  const pendingItems = assignedItems.filter((it) => it.status === "PENDING" || it.status === "ACCEPTED");
+  const prepItems = assignedItems.filter((it) => it.status === "PREPARING");
+  const readyItems = assignedItems.filter((it) => it.status === "READY");
 
-                        <div className="flex flex-col items-start gap-3 text-sm lg:items-end lg:text-right">
-                            <div className="flex flex-wrap gap-2 self-start lg:self-end">
-                                <button
-                                    type="button"
-                                    onClick={refreshBoard}
-                                    className="kitchen-paper-action"
-                                    disabled={refreshing || ordersLoading || staffLoading}
-                                >
-                                    {refreshing ? (
-                                        <span className="inline-flex items-center gap-2">
-                                            <LoaderCircle size={14} className="animate-spin" />
-                                            Refreshing
-                                        </span>
-                                    ) : (
-                                        <span className="inline-flex items-center gap-2">
-                                            <RefreshCw size={14} />
-                                            Refresh
-                                        </span>
-                                    )}
-                                </button>
-                            </div>
+  const displayedItems = useMemo(() => {
+    if (statusFilter === "ALL") return assignedItems;
+    if (statusFilter === "PENDING") {
+      return assignedItems.filter((it) => it.status === "PENDING" || it.status === "ACCEPTED");
+    }
+    return assignedItems.filter((it) => it.status === statusFilter);
+  }, [assignedItems, statusFilter]);
 
-                            <div className="space-y-1">
-                                <p className="font-semibold text-[var(--kitchen-ink)]">{restaurantName}</p>
-                                <p className="text-[var(--kitchen-muted)]">
-                                    {String(currentChef?.name || "Chef").trim() || "Chef"} -{" "}
-                                    {String(currentChef?.designation || effectiveRole || "Chef")
-                                        .replace(/_/g, " ")
-                                        .toLowerCase()
-                                        .replace(/\b\w/g, (char) => char.toUpperCase())}
-                                </p>
-                                <p className="inline-flex items-center gap-2 text-[var(--kitchen-muted)]">
-                                    <Sparkles size={14} />
-                                    {connected ? "Live socket connected" : "Live socket reconnecting"}
-                                    {socketError ? ` - ${socketError}` : ""}
-                                </p>
-                                {lastSyncAt ? (
-                                    <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--kitchen-muted)]">
-                                        Synced {lastSyncAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                                    </p>
-                                ) : null}
-                            </div>
-                        </div>
-                    </div>
-                </header>
+  return (
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans">
+      {/* Top Navigation Bar */}
+      <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {isPrivileged && (
+              <Link
+                to="/kitchen"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                title="Back to Senior Chef Command Center"
+              >
+                <ArrowLeft size={16} />
+              </Link>
+            )}
 
-                <div className="kitchen-paper-rule my-6" />
-
-                {(ordersError || staffError) && (
-                    <div className="mb-5 space-y-2 text-sm text-[#9a4e16]">
-                        {ordersError ? <p>{ordersError}</p> : null}
-                        {staffError ? <p>{staffError}</p> : null}
-                    </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <ChefHat className="text-orange-500" size={20} />
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-orange-500 text-white shadow-xs">
+                  CHEF STATION
+                </span>
+                <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-900 dark:text-slate-100">
+                  {chefInfo?.name || "Chef"}
+                </h1>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  Station #{chefId}
+                </span>
+                {kitchenConfig.mode === "SELF_PICK" && (
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 animate-pulse">
+                    SELF-PICK ACTIVE ({kitchenConfig.scope})
+                  </span>
                 )}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                {viewMode === "HISTORY" ? (
+                  <span>Chef History • Completed Items • Station #{chefId}</span>
+                ) : (
+                  <span>My Preparation Queue • {chefInfo?.designation || "Kitchen Line"} • Active Work: <strong>{activeItems.length} items</strong></span>
+                )}
+              </div>
+            </div>
+          </div>
 
-                <div className="grid min-h-0 gap-8 lg:flex-1 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,0.88fr)]">
-                    <section className="min-h-0 lg:flex lg:h-full lg:flex-col lg:overflow-hidden">
-                        <div className="flex h-full min-h-0 flex-col rounded-[28px] border border-[rgba(95,61,31,0.12)] bg-[rgba(255,255,255,0.34)] p-4 shadow-[0_10px_22px_rgba(74,43,19,0.04)]">
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[var(--kitchen-muted)]">
-                                        Live orders to pick
-                                    </p>
-                                    <h3 className="mt-2 font-serif text-2xl font-bold text-[var(--kitchen-ink)]">
-                                        Pick from pass
-                                    </h3>
-                                </div>
-                                <span className="kitchen-paper-chip">
-                                    {availableTickets.length} open
-                                </span>
-                            </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                loadStationData(false);
+                loadHistoryData(1, false);
+              }}
+              disabled={loading || loadingHistory}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition shadow-xs"
+            >
+              <RefreshCw size={13} className={loading || loadingHistory ? "animate-spin text-orange-500" : ""} />
+              Refresh
+            </button>
+          </div>
+        </div>
+      </header>
 
-                            <p className="mt-2 text-[12px] leading-5 text-[var(--kitchen-muted)]">
-                                Tap Pick to claim an open ticket. It will move into your live load and appear in your history.
-                            </p>
+      {/* Main Container */}
+      <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
+        {/* WORKSPACE NAVIGATION TABS (MY ASSIGNED ITEMS vs HISTORY) */}
+        <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+          <button
+            type="button"
+            data-testid="tab-assigned-items"
+            onClick={() => {
+              setViewMode("QUEUE");
+              navigate(`/kitchen/chef/${chefId}`);
+            }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition ${
+              viewMode === "QUEUE"
+                ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm"
+                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
+            }`}
+          >
+            <UtensilsCrossed size={14} />
+            <span>MY ASSIGNED ITEMS</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                viewMode === "QUEUE"
+                  ? "bg-orange-500 text-white"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+              }`}
+            >
+              {assignedItems.length}
+            </span>
+          </button>
 
-                            <div className="mt-4 min-h-0 space-y-3 lg:flex-1 lg:overflow-y-auto lg:pr-2">
-                                {!historyReady || ordersLoading || staffLoading ? (
-                                    <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                        <LoaderCircle size={16} className="animate-spin" />
-                                        Loading live orders...
-                                    </div>
-                                ) : !currentChef ? (
-                                    <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                        <ChefHat size={16} />
-                                        Chef not found. Open a chef from the kitchen board.
-                                    </div>
-                                ) : availableTickets.length === 0 ? (
-                                    <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                        <UtensilsCrossed size={16} />
-                                        No open tickets are waiting to be picked.
-                                    </div>
-                                ) : (
-                                    availableTickets.map((ticket) => (
-                                        <TicketCard
-                                            key={ticket.itemKey}
-                                            ticket={ticket}
-                                            chef={null}
-                                            chefLabel="Unassigned"
-                                            onAction={handlePickTicket}
-                                            actionLabel="Pick"
-                                            actionIcon={<ChefHat size={14} />}
-                                            actionStyle={{
-                                                backgroundColor: "rgba(249, 115, 22, 0.12)",
-                                                borderColor: "rgba(249, 115, 22, 0.24)",
-                                                color: "#7d4212",
-                                            }}
-                                            actionTitle={`Pick ${ticket.itemName}`}
-                                        />
-                                    ))
-                                )}
-                            </div>
-                        </div>
+          <button
+            type="button"
+            data-testid="tab-chef-history"
+            onClick={() => {
+              setViewMode("HISTORY");
+              navigate(`/kitchen/chef/${chefId}/history`);
+            }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition ${
+              viewMode === "HISTORY"
+                ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm"
+                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
+            }`}
+          >
+            <History size={14} />
+            <span>HISTORY</span>
+            {historyPagination.totalCount > 0 && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                  viewMode === "HISTORY"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                }`}
+              >
+                {historyPagination.totalCount}
+              </span>
+            )}
+          </button>
+        </div>
 
-                    </section>
+        {/* ========================================================= */}
+        {/* VIEW 1: MY ASSIGNED ITEMS QUEUE */}
+        {/* ========================================================= */}
+        {viewMode === "QUEUE" && (
+          <div className="space-y-6">
+            {/* Metric Badges */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 shadow-xs">
+                <div className="text-[11px] text-slate-500 font-semibold mb-1">My Assigned Total</div>
+                <div className="text-xl font-extrabold text-slate-900 dark:text-slate-100">{assignedItems.length}</div>
+              </div>
 
-                    <aside className="min-h-0 lg:flex lg:h-full lg:flex-col lg:overflow-hidden">
-                        <div className="flex shrink-0 items-end justify-between gap-3">
-                            <div>
-                                <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[var(--kitchen-muted)]">
-                                    Current assigned items
-                                </p>
-                                <h2 className="mt-2 font-serif text-3xl font-bold text-[var(--kitchen-ink)]">
-                                    Live load
-                                </h2>
-                            </div>
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 shadow-xs">
+                <div className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mb-1 flex items-center gap-1">
+                  <Clock size={12} />
+                  My Pending
+                </div>
+                <div className="text-xl font-extrabold text-amber-600 dark:text-amber-400">{pendingItems.length}</div>
+              </div>
 
-                            <p className="text-right text-xs uppercase tracking-[0.22em] text-[var(--kitchen-muted)]">
-                                {currentTickets.length} item{currentTickets.length === 1 ? "" : "s"}
-                            </p>
-                        </div>
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 shadow-xs">
+                <div className="text-[11px] text-orange-600 dark:text-orange-400 font-semibold mb-1 flex items-center gap-1">
+                  <Flame size={12} />
+                  My Preparing
+                </div>
+                <div className="text-xl font-extrabold text-orange-600 dark:text-orange-400">{prepItems.length}</div>
+              </div>
 
-                        <div className="mt-5 min-h-0 space-y-3 lg:flex-1 lg:overflow-y-auto lg:pr-2">
-                            {!historyReady || ordersLoading || staffLoading ? (
-                                <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                    <LoaderCircle size={16} className="animate-spin" />
-                                    Loading assigned items...
-                                </div>
-                            ) : !currentChef ? (
-                                <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                    <ChefHat size={16} />
-                                    Chef not found. Open a chef from the kitchen board.
-                                </div>
-                            ) : currentTickets.length === 0 ? (
-                                <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                    <UtensilsCrossed size={16} />
-                                    No items are assigned to this chef right now.
-                                </div>
-                            ) : (
-                                currentTickets.map((ticket) => (
-                                    <TicketCard
-                                        key={ticket.itemKey}
-                                        ticket={ticket}
-                                        chef={currentChef}
-                                        onAction={handleCompleteTicket}
-                                    />
-                                ))
-                            )}
-                        </div>
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 shadow-xs">
+                <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mb-1 flex items-center gap-1">
+                  <CheckCircle2 size={12} />
+                  My Ready
+                </div>
+                <div className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400">{readyItems.length}</div>
+              </div>
+            </div>
 
-                        <button
-                            type="button"
-                            onClick={() => setHistoryOpen(true)}
-                            className="kitchen-paper-action mt-4 w-full justify-center lg:w-auto lg:self-end"
-                        >
-                            <History size={14} />
-                            History
-                        </button>
-                    </aside>
+            {/* SECTION 1: MY ASSIGNED ITEMS */}
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <ChefHat size={16} className="text-orange-500" />
+                  <h2 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                    My Assigned Items ({displayedItems.length})
+                  </h2>
                 </div>
 
-                {historyOpen ? (
-                    <div
-                        className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(18,12,8,0.48)] px-4 py-6 backdrop-blur-sm"
-                        onClick={() => setHistoryOpen(false)}
-                        role="presentation"
+                {/* Filter Tabs */}
+                <div className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold">
+                  {[
+                    { id: "ALL", label: `All (${assignedItems.length})` },
+                    { id: "PENDING", label: `Pending (${pendingItems.length})` },
+                    { id: "PREPARING", label: `Preparing (${prepItems.length})` },
+                    { id: "READY", label: `Ready (${readyItems.length})` },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setStatusFilter(tab.id)}
+                      className={`px-3 py-1 rounded-md transition ${
+                        statusFilter === tab.id
+                          ? "bg-orange-500 text-white shadow-xs"
+                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                      }`}
                     >
-                        <div
-                            role="dialog"
-                            aria-modal="true"
-                            aria-label="Past assigned items history"
-                            className="flex max-h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-[32px] border border-[rgba(95,61,31,0.16)] bg-[rgba(255,248,239,0.98)] shadow-[0_30px_90px_rgba(74,43,19,0.28)]"
-                            onClick={(event) => event.stopPropagation()}
-                        >
-                            <div className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b border-[rgba(95,61,31,0.1)] px-5 py-4">
-                                <div>
-                                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[var(--kitchen-muted)]">
-                                        Past assigned items
-                                    </p>
-                                    <h3 className="mt-2 font-serif text-2xl font-bold text-[var(--kitchen-ink)]">
-                                        History trail
-                                    </h3>
-                                </div>
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-                                <button
-                                    type="button"
-                                    onClick={() => setHistoryOpen(false)}
-                                    className="kitchen-paper-action"
-                                >
-                                    Close
-                                </button>
-                            </div>
-
-                            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-5 pr-3">
-                                {!historyReady || ordersLoading || staffLoading ? (
-                                    <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                        <LoaderCircle size={16} className="animate-spin" />
-                                        Loading history...
-                                    </div>
-                                ) : !currentChef ? (
-                                    <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                        <History size={16} />
-                                        Chef not found. Open a chef from the kitchen board.
-                                    </div>
-                                ) : relevantHistory.length === 0 ? (
-                                    <div className="flex items-center gap-3 text-sm text-[var(--kitchen-muted)]">
-                                        <History size={16} />
-                                        No history found for this chef yet.
-                                    </div>
-                                ) : (
-                                    relevantHistory.map((entry) => (
-                                        <HistoryCard
-                                            key={entry.id || `${entry.timestamp}-${entry.itemKey}`}
-                                            entry={entry}
-                                            chef={currentChef}
-                                        />
-                                    ))
-                                )}
-                            </div>
+              {/* Items Grid */}
+              {loading && !assignedItems.length ? (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center text-xs text-slate-500">
+                  <RefreshCw size={24} className="animate-spin text-orange-500 mx-auto mb-3" />
+                  Loading assigned items...
+                </div>
+              ) : !displayedItems.length ? (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center shadow-xs">
+                  <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 text-slate-400 rounded-xl flex items-center justify-center mx-auto mb-3">
+                    <Inbox size={24} />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">
+                    No items in this queue
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                    {statusFilter === "ALL"
+                      ? "You currently have no items assigned. Pick from the available queue below if self-pick is enabled."
+                      : `No items currently matching the ${statusFilter} filter.`}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {displayedItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 shadow-xs flex flex-col justify-between"
+                    >
+                      <div>
+                        {/* Top KOT and Table row */}
+                        <div className="flex items-center justify-between text-xs mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-slate-900 dark:text-slate-100">
+                              #{item.kotNumber || item.kotId}
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
+                              Table: {item.tableNo || "N/A"}
+                            </span>
+                            {item.priority === "URGENT" && (
+                              <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                                URGENT
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                              item.status === "READY"
+                                ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"
+                                : item.status === "PREPARING"
+                                ? "bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 animate-pulse"
+                                : "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300"
+                            }`}
+                          >
+                            {item.status}
+                          </span>
                         </div>
+
+                        {/* Item Name and Quantity */}
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                            {item.name}
+                          </div>
+                          <span className="text-xs font-black px-2 py-0.5 rounded bg-orange-100 dark:bg-orange-950 text-orange-800 dark:text-orange-300 shrink-0">
+                            {item.quantity}x
+                          </span>
+                        </div>
+
+                        {/* Variant / Modifiers / Notes */}
+                        {item.variant && (
+                          <div className="text-[11px] text-slate-500 mb-1">Variant: {item.variant}</div>
+                        )}
+                        {item.notes && (
+                          <div className="text-[11px] italic text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 rounded px-2 py-1 mb-2">
+                            Note: {item.notes}
+                          </div>
+                        )}
+
+                        <div className="text-[10px] text-slate-400 mb-3 flex items-center justify-between">
+                          <span>Waiting: {item.elapsedMinutes || 0}m</span>
+                          <span>{item.assignmentSource === "SELF_PICKED" ? "Self-Picked" : "Dispatched"}</span>
+                        </div>
+                      </div>
+
+                      {/* Lifecycle Action Buttons */}
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                        {item.status === "PENDING" || item.status === "ACCEPTED" ? (
+                          <button
+                            type="button"
+                            onClick={() => handleStartPreparing(item)}
+                            disabled={Boolean(actionInProgress[item.id])}
+                            className="w-full py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <Play size={14} />
+                            START PREPARING
+                          </button>
+                        ) : item.status === "PREPARING" ? (
+                          <button
+                            type="button"
+                            onClick={() => handleMarkReady(item)}
+                            disabled={Boolean(actionInProgress[item.id])}
+                            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <CheckCircle2 size={14} />
+                            MARK READY
+                          </button>
+                        ) : item.status === "READY" ? (
+                          <div className="py-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs font-bold text-center flex items-center justify-center gap-1.5 border border-emerald-200 dark:border-emerald-900/60">
+                            <CheckCircle2 size={14} />
+                            Ready for Waiter Pickup
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                ) : null}
+                  ))}
+                </div>
+              )}
             </div>
-        </div>
-    );
+
+            {/* SECTION 2: AVAILABLE WORK (SELF-PICK MODE ONLY) */}
+            {kitchenConfig.mode === "SELF_PICK" && (
+              <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} className="text-emerald-500" />
+                    <h2 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                      Available Work to Claim (Self-Pick)
+                    </h2>
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    Scope: <strong>{kitchenConfig.scope}</strong>
+                  </span>
+                </div>
+
+                {/* Available KOTs */}
+                {(kitchenConfig.scope === "KOTS" || kitchenConfig.scope === "BOTH") && (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <Layers size={14} className="text-emerald-500" />
+                      Available KOTs ({availableWork.availableKots?.length || 0})
+                    </h3>
+
+                    {!availableWork.availableKots?.length ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-800 p-4 text-center text-xs text-slate-400">
+                        No unassigned KOTs currently available.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {availableWork.availableKots.map((k) => (
+                          <div
+                            key={k.id}
+                            className="bg-white dark:bg-slate-900 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 p-4 shadow-xs flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between text-xs mb-2">
+                                <span className="font-bold text-slate-900 dark:text-slate-100">
+                                  KOT #{k.kotNumber || k.id}
+                                </span>
+                                <span className="text-slate-500">Table: {k.tableNo || "N/A"}</span>
+                              </div>
+
+                              <div className="text-xs text-slate-600 dark:text-slate-400 space-y-1 mb-3">
+                                <div>Unassigned Items: <strong>{k.unassignedCount} of {k.totalItems}</strong></div>
+                                <div className="text-[11px] text-slate-500">Waiting: {k.elapsedMinutes || 0}m</div>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleClaimKot(k)}
+                              disabled={Boolean(actionInProgress[`claim_kot_${k.id}`])}
+                              className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                            >
+                              <Check size={14} />
+                              CLAIM ORDER ({k.unassignedCount} items)
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Available Items */}
+                {(kitchenConfig.scope === "ITEMS" || kitchenConfig.scope === "BOTH") && (
+                  <div className="space-y-2 pt-2">
+                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <UtensilsCrossed size={14} className="text-emerald-500" />
+                      Available Individual Items ({availableWork.availableItems?.length || 0})
+                    </h3>
+
+                    {!availableWork.availableItems?.length ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-800 p-4 text-center text-xs text-slate-400">
+                        No unassigned items currently available.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {availableWork.availableItems.map((it) => (
+                          <div
+                            key={it.id}
+                            className="bg-white dark:bg-slate-900 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 p-4 shadow-xs flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between text-xs mb-1.5">
+                                <span className="font-bold text-slate-900 dark:text-slate-100">
+                                  KOT #{it.kotNumber || it.kotId}
+                                </span>
+                                <span className="text-slate-500">Table: {it.tableNo || "N/A"}</span>
+                              </div>
+
+                              <div className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1 flex items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 rounded text-xs font-black">
+                                  {it.quantity}x
+                                </span>
+                                <span>{it.name}</span>
+                              </div>
+
+                              {it.variant && (
+                                <div className="text-[11px] text-slate-500 mb-1">Variant: {it.variant}</div>
+                              )}
+
+                              <div className="text-[10px] text-slate-400 mb-3">
+                                Waiting: {it.elapsedMinutes || 0}m
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleClaimItem(it)}
+                              disabled={Boolean(actionInProgress[`claim_item_${it.id}`])}
+                              className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                            >
+                              <Check size={14} />
+                              CLAIM ITEM
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* VIEW 2: CHEF HISTORY (DATE-WISE COMPLETED ITEMS) */}
+        {/* ========================================================= */}
+        {viewMode === "HISTORY" && (
+          <div className="space-y-6" data-testid="chef-history-container">
+            {/* History Header & Summary Banner */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <History className="text-emerald-600 dark:text-emerald-400" size={20} />
+                    <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-slate-100">
+                      Chef History
+                    </h2>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                      Completed Items
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Authoritative preparation records for <strong>{chefInfo?.name || "Chef"}</strong> (Station #{chefId}). Grouped by calendar date with completion timestamps.
+                  </p>
+                </div>
+
+                {/* Lifetime/Total summary badge */}
+                <div className="flex items-center gap-3">
+                  <div className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-right">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Total Completed</div>
+                    <div className="text-lg font-black text-emerald-600 dark:text-emerald-400">
+                      {historyPagination.totalCount}
+                    </div>
+                  </div>
+                  <div className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-right">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Showing</div>
+                    <div className="text-lg font-black text-slate-900 dark:text-slate-100">
+                      {historyItems.length}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Filters Bar: Date Presets, Custom Date, and Search */}
+              <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                {/* Date Filter Buttons */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[
+                    { id: "today", label: "Today" },
+                    { id: "yesterday", label: "Yesterday" },
+                    { id: "7d", label: "Last 7 Days" },
+                    { id: "all", label: "All Time" },
+                    { id: "custom", label: "Custom Date" },
+                  ].map((filter) => (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      data-testid={`filter-${filter.id}`}
+                      onClick={() => handleDateFilterChange(filter.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        historyDateRange === filter.id
+                          ? "bg-emerald-600 text-white shadow-xs"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      }`}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+
+                  {historyDateRange === "custom" && (
+                    <input
+                      type="date"
+                      data-testid="custom-date-input"
+                      value={customDate}
+                      onChange={(e) => handleCustomDateChange(e.target.value)}
+                      className="px-2.5 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+                    />
+                  )}
+                </div>
+
+                {/* Search Input */}
+                <div className="relative w-full md:w-64">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    data-testid="history-search-input"
+                    placeholder="Search item, KOT #, or table..."
+                    value={historySearchInput}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    className="w-full pl-9 pr-8 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+                  />
+                  {historySearchInput && (
+                    <button
+                      type="button"
+                      onClick={handleClearSearch}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      title="Clear search"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Date-wise Grouped History Display */}
+            {loadingHistory && !historyItems.length ? (
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center text-xs text-slate-500">
+                <RefreshCw size={24} className="animate-spin text-emerald-600 mx-auto mb-3" />
+                Loading completed items history...
+              </div>
+            ) : groupedHistory.length === 0 ? (
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 text-center shadow-xs">
+                <div className="w-14 h-14 bg-slate-100 dark:bg-slate-800 text-slate-400 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                  <Inbox size={28} />
+                </div>
+                <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 mb-1">
+                  {historySearch.trim()
+                    ? `No completed items found matching "${historySearch}"`
+                    : historyDateRange === "today"
+                    ? "No completed items for this date."
+                    : historyDateRange === "yesterday"
+                    ? "No completed items for this date."
+                    : historyDateRange === "custom"
+                    ? "No completed items for this date."
+                    : "No completed items yet."}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                  {historySearch.trim()
+                    ? "Try adjusting your search terms or date filter."
+                    : "When you mark assigned preparation items as READY, they will be archived here with exact completion timestamps."}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {groupedHistory.map((group) => (
+                  <div key={group.dateKey} className="space-y-3" data-testid={`history-group-${group.dateKey}`}>
+                    {/* Group Header */}
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={14} className="text-emerald-600 dark:text-emerald-400" />
+                        <span className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                          {group.dateHeading}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-200/60 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                        {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                      </span>
+                    </div>
+
+                    {/* Group Items Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {group.items.map((item) => (
+                        <div
+                          key={`chef-history-item-${item.id}`}
+                          data-testid={`history-item-${item.id}`}
+                          data-kot-id={item.kotId}
+                          data-order-item-id={item.orderItemId}
+                          data-menu-item-id={item.menuItemId}
+                          data-order-id={item.orderId}
+                          className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 shadow-xs flex flex-col justify-between transition hover:border-slate-300 dark:hover:border-slate-700"
+                        >
+                          <div>
+                            {/* Card Top Row: KOT #, Table, Priority, Completed Badge */}
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-black text-slate-900 dark:text-slate-100 tracking-tight">
+                                  #{item.kotNumber || item.kotId}
+                                </span>
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                  {item.tableNo}
+                                </span>
+                                {item.priority === "URGENT" || item.priority === "HIGH" ? (
+                                  <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                                    {item.priority}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                                <CheckCircle2 size={11} />
+                                COMPLETED
+                              </span>
+                            </div>
+
+                            {/* Item Name and Quantity */}
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <div className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-snug">
+                                {item.name}
+                              </div>
+                              <span className="text-xs font-black px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300 shrink-0 border border-orange-200/50 dark:border-orange-900/40">
+                                {item.quantity}x
+                              </span>
+                            </div>
+
+                            {/* Variant / Modifiers / Notes */}
+                            {item.variantName && (
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mb-1">
+                                Variant: {item.variantName}
+                              </div>
+                            )}
+                            {item.notes && (
+                              <div className="text-[11px] italic text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 rounded px-2 py-1 mb-2 border border-amber-200/50 dark:border-amber-900/40">
+                                Note: {item.notes}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Card Footer: Authoritative Timestamps and Assignment Source */}
+                          <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mt-2">
+                            <div className="flex items-center gap-1.5">
+                              <Clock size={12} className="text-emerald-600 dark:text-emerald-400" />
+                              <span>Completed <strong>{item.completedTime}</strong></span>
+                              {typeof item.prepTimeMinutes === "number" && (
+                                <span className="text-[10px] text-slate-400">({item.prepTimeMinutes}m prep)</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                              {item.assignmentSource === "SELF_PICKED" ? "Self-Picked" : "Dispatched"}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Pagination: Load More Button */}
+                {historyPagination.hasMore && (
+                  <div className="flex justify-center pt-4 pb-2">
+                    <button
+                      type="button"
+                      data-testid="load-more-btn"
+                      onClick={handleLoadMoreHistory}
+                      disabled={loadingMoreHistory}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs transition shadow-md disabled:opacity-50"
+                    >
+                      {loadingMoreHistory ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" />
+                          <span>Loading More...</span>
+                        </>
+                      ) : (
+                        <span>
+                          Load More Completed Items ({historyItems.length} of {historyPagination.totalCount})
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  );
 }

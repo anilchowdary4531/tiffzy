@@ -293,10 +293,14 @@ fun MenuScreen(
                         ) {
                             items(filteredItems) { item ->
                                 val isFavorite = restaurant != null && favItems.any { it.key == "${restaurant.slug}:${item.id}" }
+                                val inCartQty = cartItems.find { it.menuItem.id == item.id }?.quantity ?: 0
                                 MenuItemGridCard(
                                     item = item,
                                     isFavorite = isFavorite,
+                                    quantity = inCartQty,
                                     onAdd = { viewModel.addToCart(item) },
+                                    onIncrease = { com.tiffzy.app.data.repository.CartRepository.getInstance().increaseQuantity(item.id) },
+                                    onDecrease = { com.tiffzy.app.data.repository.CartRepository.getInstance().decreaseQuantity(item.id) },
                                     onToggleFavorite = { viewModel.toggleFavorite(item) }
                                 )
                             }
@@ -312,7 +316,10 @@ fun MenuScreen(
 fun MenuItemGridCard(
     item: MenuItem,
     isFavorite: Boolean = false,
+    quantity: Int = 0,
     onAdd: () -> Unit,
+    onIncrease: () -> Unit = onAdd,
+    onDecrease: () -> Unit = {},
     onToggleFavorite: () -> Unit = {}
 ) {
     Card(
@@ -432,8 +439,11 @@ fun MenuItemGridCard(
                     TiffzyAddButton(
                         onClick = onAdd,
                         enabled = item.isAvailable,
+                        quantity = quantity,
+                        onIncrease = onIncrease,
+                        onDecrease = onDecrease,
                         modifier = Modifier
-                            .width(64.dp)
+                            .width(68.dp)
                             .height(32.dp)
                     )
                 }
@@ -446,26 +456,98 @@ fun MenuItemGridCard(
 fun TiffzyAddButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
+    quantity: Int = 0,
+    onIncrease: () -> Unit = onClick,
+    onDecrease: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    OutlinedButton(
-        onClick = onClick,
-        modifier = modifier,
-        enabled = enabled,
-        shape = MaterialTheme.shapes.medium,
-        colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = Color(0xFF16A34A),
-            disabledContentColor = MaterialTheme.colorScheme.outline
-        ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (enabled) Color(0xFFE2E8F0) else MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
-        contentPadding = PaddingValues(0.dp)
-    ) {
-        Text(
-            text = if (enabled) "ADD" else "SOLD OUT",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            fontSize = if (enabled) 12.sp else 8.sp
-        )
+    if (!enabled) {
+        OutlinedButton(
+            onClick = {},
+            modifier = modifier,
+            enabled = false,
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.outlinedButtonColors(
+                disabledContentColor = MaterialTheme.colorScheme.outline
+            ),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            Text(
+                text = "SOLD OUT",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                fontSize = 8.sp
+            )
+        }
+    } else if (quantity > 0) {
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = Color.White,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF16A34A)),
+            modifier = modifier
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(1f)
+                        .clickable { onDecrease() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "-",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF16A34A)
+                    )
+                }
+                Text(
+                    text = "$quantity",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF16A34A),
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(1f)
+                        .clickable { onIncrease() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "+",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF16A34A)
+                    )
+                }
+            }
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = true,
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = Color(0xFF16A34A)
+            ),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            Text(
+                text = "ADD",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp
+            )
+        }
     }
 }
 

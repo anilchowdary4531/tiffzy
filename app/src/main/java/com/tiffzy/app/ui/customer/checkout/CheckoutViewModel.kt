@@ -154,7 +154,7 @@ class CheckoutViewModel(
                 val order = response.order
                 val finalPaymentMethod = if (state.checkoutPreview?.total == 0.0 && state.useWallet) "PAY_LATER" else state.selectedPaymentMethod
                 
-                if (finalPaymentMethod == "CASH" || finalPaymentMethod == "PAY_LATER") {
+                if (finalPaymentMethod == "CASH" || finalPaymentMethod == "PAY_LATER" || finalPaymentMethod == "WALLET") {
                     try {
                         repository.verifyPayment(
                             VerifyPaymentRequest(

@@ -25,21 +25,9 @@ import {
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { api } from "../../utils/apiClient";
+import { api, invalidateGetCache } from "../../utils/apiClient";
 import { resolveImageUrl } from "../../utils/resolveImageUrl";
-import tiffzyLogo from "../../assets/tiffzy-logo.png";
-
-const SUPER_ADMIN_MENU_ITEMS = [
-    { key: "dashboard", label: "Dashboard Overview", icon: LayoutDashboard, to: "/super-admin" },
-    { key: "restaurants", label: "Restaurant Management", icon: Building2, to: "/super-admin#restaurants-section" },
-    { key: "restaurant-profile", label: "Restaurant Profile Page", icon: Utensils, to: "/super-admin/restaurant-profiles" },
-    { key: "categories", label: "Home Categories", icon: Menu, to: "/super-admin/categories" },
-    { key: "banners", label: "Promotion Banners", icon: ImageIcon, to: "/super-admin/banners" },
-    { key: "users", label: "Customer & Staff Users", icon: Users, to: "/super-admin/users" },
-    { key: "settlements", label: "Cashfree Easy Split", icon: BarChart3, to: "/super-admin/settlements" },
-    { key: "create-restaurant", label: "Create Restaurant", icon: Store, to: "/super-admin/create-restaurant" },
-    { key: "settings", label: "System Settings", icon: Settings, to: "/super-admin/settings" },
-];
+import SuperAdminSidebar from "../../components/super-admin/SuperAdminSidebar";
 
 export default function SuperAdminRestaurantProfiles() {
     const navigate = useNavigate();
@@ -83,6 +71,52 @@ export default function SuperAdminRestaurantProfiles() {
         }
     };
 
+    const toggleTobaccoStatus = async (restaurant) => {
+        setError("");
+        const currentStatus = Boolean(restaurant.tobaccoApproved);
+        const nextStatus = !currentStatus;
+
+        setRestaurants((prev) =>
+            prev.map((r) => (r.id === restaurant.id ? { ...r, tobaccoApproved: nextStatus } : r))
+        );
+
+        try {
+            let res = null;
+            try {
+                res = await api.patch(`/super-admin/restaurants/${restaurant.id}/tobacco-status`, {
+                    tobaccoApproved: nextStatus,
+                });
+            } catch {
+                try {
+                    res = await api.patch(`/super-admin/restaurants/${restaurant.id}`, {
+                        tobaccoApproved: nextStatus,
+                    });
+                } catch {
+                    // Fallback to plain axios if needed
+                    const token = localStorage.getItem("token");
+                    res = await axios.patch(`${API}/super-admin/restaurants/${restaurant.id}/tobacco-status`,
+                        { tobaccoApproved: nextStatus },
+                        { headers: { Authorization: `Bearer ${token}` } }
+                    ).catch(() => null);
+                }
+            }
+
+            try {
+                invalidateGetCache({ urlStartsWith: "/owner" });
+                invalidateGetCache({ urlStartsWith: "/super-admin" });
+            } catch {}
+
+            const updated = res?.data?.restaurant || res?.restaurant;
+            if (updated && updated.tobaccoApproved !== undefined) {
+                setRestaurants((prev) =>
+                    prev.map((r) => (r.id === restaurant.id ? { ...r, tobaccoApproved: Boolean(updated.tobaccoApproved) } : r))
+                );
+            }
+        } catch (err) {
+            console.error("Failed to toggle tobacco status:", err);
+        }
+    };
+
     const handleCopy = (text, key) => {
         if (!text) return;
         navigator.clipboard.writeText(text);
@@ -106,43 +140,16 @@ export default function SuperAdminRestaurantProfiles() {
 
     return (
         <div className="theme-page min-h-screen">
-            {/* Sidebar */}
-            <div className={`fixed inset-0 z-50 transition ${sidebarOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
-                <button
-                    type="button"
-                    onClick={() => setSidebarOpen(false)}
-                    className={`absolute inset-0 bg-black/45 transition-opacity ${sidebarOpen ? "opacity-100" : "opacity-0"}`}
-                />
-                <aside className={`theme-panel theme-border absolute left-0 top-0 h-full w-72 max-w-[84vw] border-r p-5 shadow-2xl transition-transform ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-2">
-                            <img src={tiffzyLogo} alt="Tiffzy" className="h-8 w-8 object-contain" />
-                            <h2 className="text-xl font-bold text-white">Tiffzy Admin</h2>
-                        </div>
-                        <button onClick={() => setSidebarOpen(false)} className="theme-soft-button p-2 rounded-xl text-white"><X size={18} /></button>
-                    </div>
-                    <nav className="grid gap-2">
-                        {SUPER_ADMIN_MENU_ITEMS.map((item) => (
-                            <button
-                                key={item.key}
-                                onClick={() => { navigate(item.to); setSidebarOpen(false); }}
-                                className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition ${item.key === "restaurant-profile" ? "theme-button" : "theme-soft-button"}`}
-                            >
-                                <item.icon size={18} /> {item.label}
-                            </button>
-                        ))}
-                    </nav>
-                </aside>
-            </div>
+            <SuperAdminSidebar open={sidebarOpen} setOpen={setSidebarOpen} currentKey="restaurant-profile" />
 
             {/* Header */}
-            <header className="theme-nav border-b px-4 py-4 md:px-8">
-                <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+            <header className="theme-nav border-b px-2 py-2 md:px-3">
+                <div className="w-full flex items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
-                        <button onClick={() => setSidebarOpen(true)} className="theme-soft-button p-2.5 rounded-xl"><Menu size={20} /></button>
+                        <button onClick={() => setSidebarOpen(true)} className="theme-soft-button p-2 rounded-xl"><Menu size={18} /></button>
                         <div>
                             <p className="theme-muted text-xs uppercase tracking-widest font-bold">Super Admin</p>
-                            <h1 className="text-2xl font-bold text-white">Restaurant Profiles & Directory</h1>
+                            <h1 className="text-xl font-bold text-white">Restaurant Profiles & Directory</h1>
                         </div>
                     </div>
                     <button onClick={logout} className="rounded-full bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/20">
@@ -152,7 +159,7 @@ export default function SuperAdminRestaurantProfiles() {
             </header>
 
             {/* Main Content */}
-            <main className="mx-auto max-w-7xl px-4 py-8 md:px-8">
+            <main className="w-full px-2 py-3 md:px-3">
                 {error && <div className="mb-6 rounded-2xl bg-red-500/10 border border-red-500/20 p-4 text-red-300 text-sm">{error}</div>}
 
                 {/* Controls Bar */}
@@ -186,6 +193,7 @@ export default function SuperAdminRestaurantProfiles() {
                             const ownerEmail = restaurant.owner?.email || restaurant.email || "Not set";
                             const ownerPhone = restaurant.owner?.phone || restaurant.phone || "Not set";
                             const upi = restaurant.upiId || `${restaurant.slug}@upi`;
+                            const isTobaccoApproved = Boolean(restaurant.tobaccoApproved);
 
                             return (
                                 <div key={restaurant.id} className="theme-panel rounded-3xl border theme-border p-6 shadow-xl relative flex flex-col justify-between">
@@ -193,99 +201,124 @@ export default function SuperAdminRestaurantProfiles() {
                                         {/* Card Header */}
                                         <div className="flex items-start justify-between gap-4 pb-4 border-b theme-border">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-14 h-14 rounded-2xl overflow-hidden bg-gray-800 border theme-border flex items-center justify-center shrink-0">
+                                                <div className="w-16 h-16 rounded-2xl overflow-hidden bg-gray-800 border theme-border flex items-center justify-center shrink-0 shadow-inner">
                                                     {restaurant.logoUrl ? (
                                                         <img src={resolveImageUrl(restaurant.logoUrl)} alt={restaurant.name} className="w-full h-full object-cover" />
                                                     ) : (
-                                                        <Store size={28} className="text-gray-500" />
+                                                        <Store size={30} className="text-gray-500" />
                                                     )}
                                                 </div>
                                                 <div>
                                                     <div className="flex items-center gap-2 flex-wrap">
                                                         <h3 className="text-xl font-black text-white">{restaurant.name}</h3>
-                                                        <span className={`px-3 py-0.5 rounded-full text-xs font-bold ${restaurant.isActive ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
+                                                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${restaurant.isActive ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
                                                             {restaurant.isActive ? "ACTIVE" : "DISABLED"}
                                                         </span>
                                                     </div>
                                                     <p className="text-xs text-orange-400 font-mono mt-0.5">/{restaurant.slug}</p>
-                                                    {restaurant.legalName && <p className="text-xs text-gray-400">Legal: {restaurant.legalName}</p>}
+                                                    {restaurant.legalName && <p className="text-xs text-gray-400 mt-0.5">Legal: {restaurant.legalName}</p>}
                                                 </div>
                                             </div>
 
-                                            <button
-                                                onClick={() => toggleStatus(restaurant)}
-                                                className={`p-2.5 rounded-xl border transition-all ${restaurant.isActive ? "border-red-500/30 text-red-400 hover:bg-red-500/10" : "border-green-500/30 text-green-400 hover:bg-green-500/10"}`}
-                                                title={restaurant.isActive ? "Disable Restaurant" : "Activate Restaurant"}
-                                            >
-                                                <Power size={18} />
-                                            </button>
+                                            <div className="flex items-center gap-2 flex-wrap justify-end">
+                                                <button
+                                                    onClick={() => toggleTobaccoStatus(restaurant)}
+                                                    className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition shadow-sm ${
+                                                        isTobaccoApproved
+                                                            ? "bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500"
+                                                            : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
+                                                    }`}
+                                                    title={isTobaccoApproved ? "Tobacco Sales Approved by Super Admin" : "Click to Approve Tobacco Sales"}
+                                                >
+                                                    <span>{isTobaccoApproved ? "✓" : "🚬"}</span>
+                                                    <span>{isTobaccoApproved ? "Tobacco Approved" : "Approve Tobacco"}</span>
+                                                </button>
+                                                <button
+                                                    onClick={() => toggleStatus(restaurant)}
+                                                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold border transition ${
+                                                        restaurant.isActive
+                                                            ? "border-green-500/30 bg-green-500/10 text-green-400"
+                                                            : "border-red-500/30 bg-red-500/10 text-red-400"
+                                                    }`}
+                                                >
+                                                    <Power size={12} />
+                                                    {restaurant.isActive ? "Active" : "Inactive"}
+                                                </button>
+                                            </div>
                                         </div>
 
-                                        {/* Details Grid */}
-                                        <div className="grid gap-4 py-4 sm:grid-cols-2 text-sm">
-                                            {/* Mail & Contact */}
-                                            <div className="theme-card rounded-2xl p-4 border theme-border space-y-2">
-                                                <div className="flex items-center gap-2 text-xs font-bold text-orange-400 uppercase tracking-wider">
-                                                    <Mail size={14} /> Owner Contact Info
-                                                </div>
-                                                <div>
-                                                    <span className="text-xs text-gray-400 block">Owner Name:</span>
-                                                    <span className="font-bold text-white">{restaurant.owner?.name || restaurant.ownerName || "Not set"}</span>
-                                                </div>
-                                                <div className="flex items-center justify-between group">
-                                                    <div>
-                                                        <span className="text-xs text-gray-400 block">Email (Mail):</span>
-                                                        <span className="font-semibold text-gray-200 text-xs break-all">{ownerEmail}</span>
+                                        {/* Details Flow (Clean Layout Without Sub-Dividing Boxes) */}
+                                        <div className="py-4 space-y-4 text-sm">
+                                            {/* Top Contact & Payment Grid */}
+                                            <div className="grid gap-4 sm:grid-cols-2">
+                                                {/* Owner Contact Info */}
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-1.5 text-xs font-bold text-orange-400 uppercase tracking-wider">
+                                                        <Mail size={13} /> Owner Contact Info
                                                     </div>
-                                                    <button onClick={() => handleCopy(ownerEmail, `email-${restaurant.id}`)} className="text-gray-400 hover:text-white p-1">
-                                                        {copiedKey === `email-${restaurant.id}` ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
-                                                    </button>
-                                                </div>
-                                                <div className="flex items-center justify-between">
-                                                    <div>
-                                                        <span className="text-xs text-gray-400 block">Phone (Number):</span>
-                                                        <span className="font-semibold text-gray-200 text-xs">{ownerPhone}</span>
+                                                    <div className="text-xs space-y-1">
+                                                        <div>
+                                                            <span className="text-gray-400">Owner Name: </span>
+                                                            <span className="font-bold text-white">{restaurant.owner?.name || restaurant.ownerName || "Not set"}</span>
+                                                        </div>
+                                                        <div className="flex items-center justify-between">
+                                                            <div>
+                                                                <span className="text-gray-400">Email: </span>
+                                                                <span className="font-semibold text-gray-200 break-all">{ownerEmail}</span>
+                                                            </div>
+                                                            <button onClick={() => handleCopy(ownerEmail, `email-${restaurant.id}`)} className="text-gray-400 hover:text-white p-1 shrink-0">
+                                                                {copiedKey === `email-${restaurant.id}` ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+                                                            </button>
+                                                        </div>
+                                                        <div className="flex items-center justify-between">
+                                                            <div>
+                                                                <span className="text-gray-400">Phone: </span>
+                                                                <span className="font-semibold text-gray-200">{ownerPhone}</span>
+                                                            </div>
+                                                            <button onClick={() => handleCopy(ownerPhone, `phone-${restaurant.id}`)} className="text-gray-400 hover:text-white p-1 shrink-0">
+                                                                {copiedKey === `phone-${restaurant.id}` ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                    <button onClick={() => handleCopy(ownerPhone, `phone-${restaurant.id}`)} className="text-gray-400 hover:text-white p-1">
-                                                        {copiedKey === `phone-${restaurant.id}` ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
-                                                    </button>
+                                                </div>
+
+                                                {/* Payment & UPI Details */}
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                                                        <CreditCard size={13} /> Payment & UPI Details
+                                                    </div>
+                                                    <div className="text-xs space-y-1">
+                                                        <div className="flex items-center justify-between">
+                                                            <div>
+                                                                <span className="text-gray-400">UPI ID: </span>
+                                                                <span className="font-mono text-emerald-300 font-bold">{upi}</span>
+                                                            </div>
+                                                            <button onClick={() => handleCopy(upi, `upi-${restaurant.id}`)} className="text-gray-400 hover:text-white p-1 shrink-0">
+                                                                {copiedKey === `upi-${restaurant.id}` ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
+                                                            </button>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-gray-400">Bank Account: </span>
+                                                            <span className="font-semibold text-gray-200">{restaurant.bankAccountNumber || "Not configured"}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-gray-400">IFSC Code: </span>
+                                                            <span className="font-mono text-gray-300">{restaurant.bankIfscCode || "Not configured"}</span>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
 
-                                            {/* UPI & Bank Details */}
-                                            <div className="theme-card rounded-2xl p-4 border theme-border space-y-2">
-                                                <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
-                                                    <CreditCard size={14} /> Payment & UPI Details
-                                                </div>
-                                                <div className="flex items-center justify-between">
-                                                    <div>
-                                                        <span className="text-xs text-gray-400 block">UPI ID:</span>
-                                                        <span className="font-mono text-emerald-300 font-bold text-xs">{upi}</span>
-                                                    </div>
-                                                    <button onClick={() => handleCopy(upi, `upi-${restaurant.id}`)} className="text-gray-400 hover:text-white p-1">
-                                                        {copiedKey === `upi-${restaurant.id}` ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
-                                                    </button>
-                                                </div>
-                                                <div>
-                                                    <span className="text-xs text-gray-400 block">Bank Account:</span>
-                                                    <span className="font-semibold text-gray-200 text-xs">{restaurant.bankAccountNumber}</span>
-                                                </div>
-                                                <div>
-                                                    <span className="text-xs text-gray-400 block">IFSC Code:</span>
-                                                    <span className="font-mono text-gray-300 text-xs">{restaurant.bankIfscCode}</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Address & Location */}
-                                            <div className="theme-card rounded-2xl p-4 border theme-border space-y-1.5 sm:col-span-2">
-                                                <div className="flex items-center gap-2 text-xs font-bold text-blue-400 uppercase tracking-wider">
-                                                    <MapPin size={14} /> Location & Business Details
+                                            {/* Location & Business Details */}
+                                            <div className="pt-3 border-t theme-border space-y-2">
+                                                <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400 uppercase tracking-wider">
+                                                    <MapPin size={13} /> Location & Business Details
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-2 text-xs">
                                                     <div><span className="text-gray-400">City / State:</span> <span className="text-white font-semibold">{restaurant.city || "N/A"}, {restaurant.state || "N/A"}</span></div>
-                                                    <div><span className="text-gray-400">GST Number:</span> <span className="text-white font-mono">{restaurant.gstNumber}</span></div>
+                                                    <div><span className="text-gray-400">GST Number:</span> <span className="text-white font-mono">{restaurant.gstNumber || "N/A"}</span></div>
                                                     <div><span className="text-gray-400">Pincode:</span> <span className="text-white font-mono">{restaurant.pincode || "N/A"}</span></div>
-                                                    <div><span className="text-gray-400">Tax & Prefix:</span> <span className="text-white font-semibold">{restaurant.invoicePrefix} ({restaurant.defaultTaxPercent}%)</span></div>
+                                                    <div><span className="text-gray-400">Tax & Prefix:</span> <span className="text-white font-semibold">{restaurant.invoicePrefix || "INV"} ({restaurant.defaultTaxPercent || 5}%)</span></div>
                                                 </div>
                                             </div>
                                         </div>
@@ -299,7 +332,7 @@ export default function SuperAdminRestaurantProfiles() {
                                         </div>
                                         <button
                                             onClick={() => navigate(`/r/${restaurant.slug}/menu`)}
-                                            className="theme-button flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold shadow-md hover:scale-105 transition-transform"
+                                            className="theme-button flex items-center gap-2 rounded-full px-5 py-2 text-xs font-bold shadow-md hover:scale-105 transition-transform"
                                         >
                                             <ExternalLink size={14} /> Open Restaurant Page
                                         </button>

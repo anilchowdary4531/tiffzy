@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
+import OwnerMenuButton from "../../components/OwnerMenuButton";
 import { API } from "../../config";
+import { useStaffSocket } from "../../context/StaffSocketContext";
+import { showToast } from "../../utils/toast";
+import SplitBillingModal from "../../components/SplitBillingModal";
+import TableQrCodeModal from "../../components/TableQrCodeModal";
+import OfflineStatusBar from "../../components/OfflineStatusBar";
+import OfflineConflictModal from "../../components/OfflineConflictModal";
+import { cacheTablesOffline, getOfflineTables } from "../../utils/offline/offlineDb";
 
 const emptyForm = {
     tableNo: "",
@@ -12,31 +21,23 @@ const emptyForm = {
 const qrImageUrl = (targetUrl) =>
     `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(targetUrl)}`;
 
-const TABLE_GROUPS_STORAGE_PREFIX = "owner_table_groups_v1";
-const TABLE_GROUP_CATALOG_STORAGE_PREFIX = "owner_table_group_catalog_v1";
+import {
+    TABLE_GROUPS_STORAGE_PREFIX,
+    TABLE_GROUP_CATALOG_STORAGE_PREFIX,
+    TABLE_GROUPS_SYNC_EVENT,
+    normalizeGroupName,
+    isSameGroupName,
+    mergeUniqueGroupNames,
+    getStoredTableGroups,
+    getStoredGroupCatalog,
+    writeStoredTableGroups,
+    writeStoredGroupCatalog,
+    resolveTableGroup,
+    toTitleCase,
+} from "../../utils/tableGrouping";
+import { useCanonicalTables } from "../../context/TableStateContext";
+
 const ALL_GROUPS_FILTER = "All";
-
-const normalizeGroupName = (value) =>
-    String(value || "")
-        .trim()
-        .replace(/\s+/g, " ");
-
-const isSameGroupName = (left, right) =>
-    normalizeGroupName(left).toLowerCase() ===
-    normalizeGroupName(right).toLowerCase();
-
-const mergeUniqueGroupNames = (names) => {
-    const unique = new Map();
-    for (const name of names || []) {
-        const normalized = normalizeGroupName(name);
-        if (!normalized) continue;
-        const key = normalized.toLowerCase();
-        if (!unique.has(key)) unique.set(key, normalized);
-    }
-    return [...unique.values()].sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" })
-    );
-};
 
 const escapeHtml = (value) =>
     String(value)
@@ -46,8 +47,36 @@ const escapeHtml = (value) =>
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 
+const formatMoney = (value) => {
+    const amount = Number(value || 0);
+    if (!Number.isFinite(amount)) return "₹0.00";
+    return `₹${amount.toFixed(2)}`;
+};
+
+const formatAge = (isoDate) => {
+    if (!isoDate) return "-";
+    const minutes = Math.max(0, Math.floor((Date.now() - new Date(isoDate).getTime()) / 60000));
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const rem = minutes % 60;
+    return rem ? `${hours}h ${rem}m` : `${hours}h`;
+};
+
 export default function OwnerTables() {
+    const navigate = useNavigate();
+    const { socket } = useStaffSocket();
+    const { tables: canonicalTables, refreshTables: refreshCanonicalTables } = useCanonicalTables();
+
     const [tables, setTables] = useState([]);
+
+    useEffect(() => {
+        if (canonicalTables && canonicalTables.length > 0) {
+            setTables(canonicalTables);
+            setLoading(false);
+        }
+    }, [canonicalTables]);
+    const [activeSessions, setActiveSessions] = useState({});
     const [form, setForm] = useState(emptyForm);
     const [editingId, setEditingId] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -55,10 +84,239 @@ export default function OwnerTables() {
     const [error, setError] = useState("");
     const [query, setQuery] = useState("");
     const [openMenuId, setOpenMenuId] = useState(null);
+    const [menuPlacement, setMenuPlacement] = useState({});
     const [tableGroups, setTableGroups] = useState({});
     const [groupCatalog, setGroupCatalog] = useState([]);
     const [newGroupName, setNewGroupName] = useState("");
     const [activeGroupFilter, setActiveGroupFilter] = useState(ALL_GROUPS_FILTER);
+
+    // Session Modals
+    const [openSessionTable, setOpenSessionTable] = useState(null);
+    const [sessionGuestCount, setSessionGuestCount] = useState(4);
+    const [sessionWaiterName, setSessionWaiterName] = useState("");
+    const [viewSessionDetail, setViewSessionDetail] = useState(null);
+    const [, setNowTick] = useState(Date.now());
+
+    // Table Operations Modals State
+    const [moveModalTable, setMoveModalTable] = useState(null);
+    const [targetMoveTableId, setTargetMoveTableId] = useState("");
+    const [submittingMove, setSubmittingMove] = useState(false);
+
+    const [mergeModalTable, setMergeModalTable] = useState(null);
+    const [targetMergeTableId, setTargetMergeTableId] = useState("");
+    const [submittingMerge, setSubmittingMerge] = useState(false);
+
+    const [transferModalTable, setTransferModalTable] = useState(null);
+    const [targetTransferTableId, setTargetTransferTableId] = useState("");
+    const [transferItemQtyMap, setTransferItemQtyMap] = useState({});
+    const [submittingTransfer, setSubmittingTransfer] = useState(false);
+    const [splitBillingSession, setSplitBillingSession] = useState(null);
+
+    // Server Assignment State
+    const [staffList, setStaffList] = useState([]);
+    const [assignServerModalTable, setAssignServerModalTable] = useState(null);
+    const [selectedWaiterIdToAssign, setSelectedWaiterIdToAssign] = useState("");
+    const [submittingAssignServer, setSubmittingAssignServer] = useState(false);
+
+    // Reservation State
+    const [reservations, setReservations] = useState([]);
+    const [seatingReservationId, setSeatingReservationId] = useState(null);
+
+    // QR Studio State
+    const [showQrStudioModal, setShowQrStudioModal] = useState(false);
+    const [qrStudioTable, setQrStudioTable] = useState(null);
+
+    // Floor Plan Layout State
+    const [viewMode, setViewMode] = useState("FLOOR_PLAN"); // "FLOOR_PLAN" | "GRID"
+    const [isEditingLayout, setIsEditingLayout] = useState(false);
+    const [editedLayoutTables, setEditedLayoutTables] = useState({});
+    const [selectedLayoutTableId, setSelectedLayoutTableId] = useState(null);
+    const [submittingLayout, setSubmittingLayout] = useState(false);
+    const [zoomLevel, setZoomLevel] = useState(1);
+    const [dragState, setDragState] = useState(null); // { tableId, startX, startY, origX, origY }
+
+    // Initialize layout editing state
+    const handleStartEditLayout = () => {
+        const layoutMap = {};
+        tables.forEach((t, index) => {
+            const defaultSection = t.section || getTableGroup(t) || "Main Floor";
+            const defaultX = t.positionX !== null && t.positionX !== undefined ? t.positionX : (index % 5) * 170 + 40;
+            const defaultY = t.positionY !== null && t.positionY !== undefined ? t.positionY : Math.floor(index / 5) * 140 + 40;
+
+            layoutMap[t.id] = {
+                id: t.id,
+                tableNo: t.tableNo,
+                seats: t.seats || 4,
+                section: defaultSection,
+                positionX: defaultX,
+                positionY: defaultY,
+                width: t.width || 130,
+                height: t.height || 100,
+                shape: t.shape || "RECTANGLE",
+                rotation: t.rotation || 0,
+            };
+        });
+        setEditedLayoutTables(layoutMap);
+        setIsEditingLayout(true);
+    };
+
+    // Save Floor Plan Layout to Backend
+    const handleSaveLayout = async () => {
+        try {
+            setSubmittingLayout(true);
+            const tablesArray = Object.values(editedLayoutTables);
+            const res = await axios.put(`${API}/owner/${restaurantId}/tables/layout`, {
+                tables: tablesArray,
+            });
+            showToast({
+                title: "Floor Plan Saved",
+                message: res.data?.message || "Floor plan layout updated successfully.",
+                variant: "success",
+            });
+            setIsEditingLayout(false);
+            await loadTables();
+        } catch (err) {
+            console.error("Error saving floor plan layout:", err);
+            showToast({
+                title: "Save Error",
+                message: err?.response?.data?.message || "Failed to save floor plan layout.",
+                variant: "error",
+            });
+        } finally {
+            setSubmittingLayout(false);
+        }
+    };
+
+    // Cancel Layout Edits
+    const handleCancelLayout = () => {
+        setEditedLayoutTables({});
+        setSelectedLayoutTableId(null);
+        setIsEditingLayout(false);
+    };
+
+    // Handle Move Table
+    const handleConfirmMoveTable = async (e) => {
+        e.preventDefault();
+        if (!moveModalTable || !targetMoveTableId) return;
+
+        try {
+            setSubmittingMove(true);
+            const res = await axios.post(
+                `${API}/owner/${restaurantId}/tables/${moveModalTable.id}/move`,
+                { targetTableId: Number(targetMoveTableId) }
+            );
+            showToast({
+                title: "Table Moved",
+                message: res.data?.message || `Table ${moveModalTable.tableNo} moved successfully.`,
+                variant: "success",
+            });
+            setMoveModalTable(null);
+            setTargetMoveTableId("");
+            await loadTables();
+            await loadActiveSessions();
+        } catch (err) {
+            console.error("Error moving table:", err);
+            const msg = err?.response?.data?.message || "Failed to move table.";
+            if (err?.response?.status === 409) {
+                showToast({
+                    title: "Table Occupied",
+                    message: "Target table is occupied. You can merge the tables instead.",
+                    variant: "warning",
+                });
+            } else {
+                showToast({ title: "Move Error", message: msg, variant: "error" });
+            }
+        } finally {
+            setSubmittingMove(false);
+        }
+    };
+
+    // Handle Merge Tables
+    const handleConfirmMergeTables = async (e) => {
+        e.preventDefault();
+        if (!mergeModalTable || !targetMergeTableId) return;
+
+        try {
+            setSubmittingMerge(true);
+            const res = await axios.post(
+                `${API}/owner/${restaurantId}/tables/${targetMergeTableId}/merge`,
+                {
+                    primaryTableId: Number(targetMergeTableId),
+                    secondaryTableId: Number(mergeModalTable.id),
+                }
+            );
+            showToast({
+                title: "Tables Merged",
+                message: res.data?.message || "Tables merged successfully.",
+                variant: "success",
+            });
+            setMergeModalTable(null);
+            setTargetMergeTableId("");
+            await loadTables();
+            await loadActiveSessions();
+        } catch (err) {
+            console.error("Error merging tables:", err);
+            showToast({
+                title: "Merge Error",
+                message: err?.response?.data?.message || "Failed to merge tables.",
+                variant: "error",
+            });
+        } finally {
+            setSubmittingMerge(false);
+        }
+    };
+
+    // Handle Item Transfer
+    const handleConfirmTransferItems = async (e) => {
+        e.preventDefault();
+        if (!transferModalTable || !targetTransferTableId) return;
+
+        const itemsToTransfer = Object.entries(transferItemQtyMap)
+            .filter(([, qty]) => Number(qty) > 0)
+            .map(([orderItemId, qtyToTransfer]) => ({
+                orderItemId: Number(orderItemId),
+                qtyToTransfer: Number(qtyToTransfer),
+            }));
+
+        if (!itemsToTransfer.length) {
+            showToast({
+                title: "Validation",
+                message: "Please select at least one item quantity to transfer.",
+                variant: "warning",
+            });
+            return;
+        }
+
+        try {
+            setSubmittingTransfer(true);
+            const res = await axios.post(
+                `${API}/owner/${restaurantId}/tables/${transferModalTable.id}/transfer-items`,
+                {
+                    targetTableId: Number(targetTransferTableId),
+                    items: itemsToTransfer,
+                }
+            );
+            showToast({
+                title: "Items Transferred",
+                message: res.data?.message || "Items transferred successfully.",
+                variant: "success",
+            });
+            setTransferModalTable(null);
+            setTargetTransferTableId("");
+            setTransferItemQtyMap({});
+            await loadTables();
+            await loadActiveSessions();
+        } catch (err) {
+            console.error("Error transferring items:", err);
+            showToast({
+                title: "Transfer Error",
+                message: err?.response?.data?.message || "Failed to transfer items.",
+                variant: "error",
+            });
+        } finally {
+            setSubmittingTransfer(false);
+        }
+    };
 
     const user = useMemo(() => {
         try {
@@ -68,7 +326,19 @@ export default function OwnerTables() {
         }
     }, []);
 
-    const restaurantId = user?.restaurantId;
+    const restaurantId = useMemo(() => {
+        const fromUser = Number(user?.restaurantId || user?.restaurant?.id || 0);
+        if (fromUser > 0) return fromUser;
+
+        const fromStorage = Number(
+            localStorage.getItem("restaurantId") ||
+            localStorage.getItem("activeRestaurantId") ||
+            0
+        );
+        if (fromStorage > 0) return fromStorage;
+
+        return 1;
+    }, [user]);
     const restaurantSlug = user?.restaurant?.slug;
     const tableGroupStorageKey = restaurantId
         ? `${TABLE_GROUPS_STORAGE_PREFIX}_${restaurantId}`
@@ -116,67 +386,420 @@ export default function OwnerTables() {
         }
     };
 
+    const loadActiveSessions = async () => {
+        if (!restaurantId) return;
+        try {
+            const res = await axios.get(`${API}/owner/${restaurantId}/tables/sessions/active`);
+            const list = Array.isArray(res?.data?.sessions) ? res.data.sessions : [];
+            const map = {};
+            list.forEach((session) => {
+                if (session && session.tableId) {
+                    map[String(session.tableId)] = session;
+                }
+            });
+            setActiveSessions(map);
+        } catch (err) {
+            console.log("Error loading active sessions:", err);
+        }
+    };
+
+    const loadReservations = async () => {
+        if (!restaurantId) return;
+        try {
+            const today = new Date().toISOString().slice(0, 10);
+            const res = await axios.get(`${API}/owner/${restaurantId}/reservations?date=${today}&status=CONFIRMED,CHECKED_IN`);
+            setReservations(res?.data?.reservations || []);
+        } catch (err) {
+            console.log("Error loading reservations:", err);
+        }
+    };
+
+    const loadStaff = async () => {
+        if (!restaurantId) return;
+        try {
+            const res = await axios.get(`${API}/owner/${restaurantId}/staff`);
+            const rawList = Array.isArray(res.data) ? res.data : (res.data?.users || res.data?.staff || []);
+            setStaffList(rawList.filter((s) => s && s.isActive !== false));
+        } catch (err) {
+            console.error("Failed to load staff in OwnerTables:", err);
+        }
+    };
+
+    const handleAssignWaiter = async (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (!restaurantId || !assignServerModalTable || !selectedWaiterIdToAssign) return;
+
+        const waiterUser = staffList.find((s) => String(s.id) === String(selectedWaiterIdToAssign));
+        const waiterName = waiterUser ? (waiterUser.name || waiterUser.userName || "Server") : "Server";
+        const prevTables = [...tables];
+
+        try {
+            setSubmittingAssignServer(true);
+
+            // Optimistic update in tables list
+            setTables((prev) =>
+                prev.map((t) => {
+                    if (t.id === assignServerModalTable.id) {
+                        return {
+                            ...t,
+                            assignedWaiterId: Number(selectedWaiterIdToAssign),
+                            assignedWaiterName: waiterName,
+                        };
+                    }
+                    return t;
+                })
+            );
+
+            await axios.post(`${API}/owner/${restaurantId}/tables/${assignServerModalTable.id}/assign-waiter`, {
+                waiterId: Number(selectedWaiterIdToAssign),
+                reason: "Assigned via Owner Tables page",
+            });
+
+            showToast({
+                title: "Server Assigned",
+                message: `${waiterName} assigned to Table ${assignServerModalTable.tableNo}.`,
+                variant: "success",
+            });
+            setAssignServerModalTable(null);
+            setSelectedWaiterIdToAssign("");
+            await loadTables();
+        } catch (err) {
+            console.error("Failed to assign server:", err);
+            setTables(prevTables);
+            showToast({
+                title: "Assignment Failed",
+                message: err?.response?.data?.message || err.message || "Failed to assign server",
+                variant: "error",
+            });
+            await loadTables();
+        } finally {
+            setSubmittingAssignServer(false);
+        }
+    };
+
+    const handleUnassignWaiter = async (tableToUnassign) => {
+        if (!restaurantId || !tableToUnassign) return;
+        const prevTables = [...tables];
+
+        try {
+            // Optimistic update
+            setTables((prev) =>
+                prev.map((t) => {
+                    if (t.id === tableToUnassign.id) {
+                        return {
+                            ...t,
+                            assignedWaiterId: null,
+                            assignedWaiterName: null,
+                        };
+                    }
+                    return t;
+                })
+            );
+
+            await axios.post(`${API}/owner/${restaurantId}/tables/${tableToUnassign.id}/unassign-waiter`, {
+                reason: "Unassigned via Owner Tables page",
+            });
+
+            showToast({
+                title: "Server Removed",
+                message: `Server unassigned from Table ${tableToUnassign.tableNo}.`,
+                variant: "success",
+            });
+            if (assignServerModalTable?.id === tableToUnassign.id) {
+                setAssignServerModalTable(null);
+            }
+            await loadTables();
+        } catch (err) {
+            console.error("Failed to unassign server:", err);
+            setTables(prevTables);
+            showToast({
+                title: "Unassignment Failed",
+                message: err?.response?.data?.message || err.message || "Failed to remove server",
+                variant: "error",
+            });
+            await loadTables();
+        }
+    };
+
+    const handleSeatReservation = async (reservationId) => {
+        if (!reservationId || !restaurantId) return;
+        try {
+            setSeatingReservationId(reservationId);
+            const res = await axios.post(`${API}/owner/${restaurantId}/reservations/${reservationId}/seat`);
+            showToast({
+                title: "Guest Seated",
+                message: res.data?.message || "Reservation seated and table session opened.",
+                variant: "success",
+            });
+            await loadTables();
+            await loadActiveSessions();
+            await loadReservations();
+        } catch (err) {
+            console.error("Error seating reservation guest:", err);
+            showToast({
+                title: "Seating Error",
+                message: err?.response?.data?.message || "Failed to seat guest for reservation.",
+                variant: "error",
+            });
+        } finally {
+            setSeatingReservationId(null);
+        }
+    };
+
+    const handleFreeTable = async (table) => {
+        if (!table || !restaurantId) return;
+
+        const session = activeSessions[String(table.id)];
+        const orders = Array.isArray(session?.orders) ? session.orders : [];
+        const hasUnpaid = orders.some((o) => {
+            const payStatus = String(o?.paymentStatus || o?.payment_status || "PENDING").toUpperCase();
+            return payStatus !== "PAID" && payStatus !== "SUCCESS";
+        });
+        if (hasUnpaid) {
+            showToast({
+                title: "Payment Pending",
+                message: `Table ${table.tableNo} has unpaid orders. Settle the bill before freeing this table.`,
+                variant: "warning",
+            });
+            return;
+        }
+
+        const confirmed = window.confirm(`Are you sure you want to free Table ${table.tableNo}? Confirm that the customer has left and there are no outstanding orders.`);
+        if (!confirmed) return;
+
+        // Optimistically remove session and set table available
+        setActiveSessions((prev) => {
+            const next = { ...prev };
+            delete next[String(table.id)];
+            return next;
+        });
+        setTables((prev) =>
+            (prev || []).map((t) =>
+                t.id === table.id
+                    ? { ...t, assignedWaiterId: null, assignedWaiterName: null, isOccupied: false, status: "AVAILABLE" }
+                    : t
+            )
+        );
+
+        try {
+            await axios.post(`${API}/owner/${restaurantId}/tables/${table.id}/clear`, {
+                force: false,
+                clearWaiter: true,
+                reason: "Table cleared by Owner via OwnerTables",
+                performedByUserId: user?.id || null,
+                performedByName: user?.name || user?.email || "Owner",
+                performedByUserRole: "OWNER",
+            });
+
+            showToast({
+                title: "Table Freed 🎉",
+                message: `Table ${table.tableNo} is now free and available.`,
+                variant: "success",
+            });
+            await loadTables();
+            await loadActiveSessions();
+        } catch (err) {
+            console.error("Failed to free table:", err);
+            await loadTables();
+            await loadActiveSessions();
+            showToast({
+                title: "Error Freeing Table",
+                message: err?.response?.data?.message || err.message || "Failed to free table.",
+                variant: "error",
+            });
+        }
+    };
+
     useEffect(() => {
         loadTables();
+        loadActiveSessions();
+        loadReservations();
+        loadStaff();
+    }, [restaurantId]);
+
+    // Live 30-sec timer tick for table occupancy duration
+    useEffect(() => {
+        const timer = setInterval(() => setNowTick(Date.now()), 30000);
+        return () => clearInterval(timer);
+    }, []);
+
+    // Socket.IO Real-time Sync
+    useEffect(() => {
+        if (!socket || typeof socket.on !== "function") return undefined;
+
+        const onSessionUpdated = (session) => {
+            if (!session) return;
+            if (session.tableId) {
+                setActiveSessions((prev) => {
+                    const next = { ...prev };
+                    if (!session.status || session.status === "CLOSED" || session.status === "CANCELLED") {
+                        delete next[String(session.tableId)];
+                    } else {
+                        next[String(session.tableId)] = session;
+                    }
+                    return next;
+                });
+            }
+            if (!session.status || session.status === "CLOSED" || session.status === "CANCELLED") {
+                setTables((prev) =>
+                    prev.map((t) => {
+                        const match =
+                            (session.tableId && String(t.id) === String(session.tableId)) ||
+                            (session.tableNo && String(t.tableNo).trim().toLowerCase() === String(session.tableNo).trim().toLowerCase());
+                        if (match) {
+                            return {
+                                ...t,
+                                isOccupied: false,
+                                status: "AVAILABLE",
+                                activeOrderCount: 0,
+                                activeItemCount: 0,
+                                activeOrders: [],
+                                activeOrderStatus: null,
+                                paymentStatus: null,
+                                session: { status: "CLOSED" },
+                                activeSession: null,
+                                occupiedSince: null,
+                                assignedWaiterId: null,
+                                assignedWaiterName: null,
+                                assignedServer: null,
+                            };
+                        }
+                        return t;
+                    })
+                );
+            }
+        };
+
+        const handleReservationChange = () => {
+            loadTables();
+            loadActiveSessions();
+            loadReservations();
+        };
+
+        const handleTableUpdated = (payload) => {
+            if (!payload || typeof payload !== "object") return;
+            const targetId = payload.tableId || payload.id;
+            const targetNo = payload.tableNo;
+
+            if (payload.status === "AVAILABLE" || payload.isOccupied === false) {
+                if (targetId) {
+                    setActiveSessions((prev) => {
+                        const next = { ...prev };
+                        delete next[String(targetId)];
+                        return next;
+                    });
+                }
+                setTables((prev) =>
+                    prev.map((t) => {
+                        const match =
+                            (targetId && String(t.id) === String(targetId)) ||
+                            (targetNo && String(t.tableNo).trim().toLowerCase() === String(targetNo).trim().toLowerCase());
+                        if (match) {
+                            return {
+                                ...t,
+                                isOccupied: false,
+                                status: "AVAILABLE",
+                                activeOrderCount: 0,
+                                activeItemCount: 0,
+                                activeOrders: [],
+                                activeOrderStatus: null,
+                                paymentStatus: null,
+                                session: { status: "CLOSED" },
+                                activeSession: null,
+                                occupiedSince: null,
+                                assignedWaiterId: null,
+                                assignedWaiterName: null,
+                                assignedServer: null,
+                            };
+                        }
+                        return t;
+                    })
+                );
+            } else if (payload.assignedWaiterId !== undefined || payload.assignedWaiterName !== undefined) {
+                const wid = payload.assignedWaiterId ? Number(payload.assignedWaiterId) : null;
+                const wname = payload.assignedWaiterName || null;
+                setTables((prev) =>
+                    prev.map((t) => {
+                        const match =
+                            (targetId && String(t.id) === String(targetId)) ||
+                            (targetNo && String(t.tableNo).trim().toLowerCase() === String(targetNo).trim().toLowerCase());
+                        if (match) {
+                            return {
+                                ...t,
+                                assignedWaiterId: wid,
+                                assignedWaiterName: wname,
+                                assignedServer: wname,
+                            };
+                        }
+                        return t;
+                    })
+                );
+            }
+            handleReservationChange();
+        };
+
+        socket.on("table:session_updated", onSessionUpdated);
+        socket.on("table:updated", handleTableUpdated);
+        socket.on("table:waiter_assigned", handleTableUpdated);
+        socket.on("table:layout_updated", loadTables);
+        socket.on("order:created", loadActiveSessions);
+        socket.on("order:updated", loadActiveSessions);
+        socket.on("reservation:updated", handleReservationChange);
+
+        return () => {
+            if (typeof socket.off === "function") {
+                socket.off("table:session_updated", onSessionUpdated);
+                socket.off("table:updated", handleTableUpdated);
+                socket.off("table:waiter_assigned", handleReservationChange);
+                socket.off("table:layout_updated", loadTables);
+                socket.off("order:created", loadActiveSessions);
+                socket.off("order:updated", loadActiveSessions);
+                socket.off("reservation:updated", handleReservationChange);
+            }
+        };
+    }, [socket]);
+
+    useEffect(() => {
+        if (!restaurantId) {
+            setTableGroups({});
+            setGroupCatalog([]);
+            return;
+        }
+
+        const load = () => {
+            const storedGroups = getStoredTableGroups(restaurantId);
+            const storedCatalog = getStoredGroupCatalog(restaurantId);
+            setTableGroups((prev) => {
+                const prevStr = JSON.stringify(prev || {});
+                const nextStr = JSON.stringify(storedGroups || {});
+                return prevStr === nextStr ? prev : storedGroups;
+            });
+            setGroupCatalog((prev) => {
+                const prevStr = JSON.stringify(prev || []);
+                const nextStr = JSON.stringify(storedCatalog || []);
+                return prevStr === nextStr ? prev : storedCatalog;
+            });
+        };
+        load();
+
+        const handleSync = () => load();
+        window.addEventListener(TABLE_GROUPS_SYNC_EVENT, handleSync);
+        window.addEventListener("storage", handleSync);
+        return () => {
+            window.removeEventListener(TABLE_GROUPS_SYNC_EVENT, handleSync);
+            window.removeEventListener("storage", handleSync);
+        };
     }, [restaurantId]);
 
     useEffect(() => {
-        if (!tableGroupStorageKey) {
-            setTableGroups({});
-            return;
-        }
-
-        try {
-            const raw = localStorage.getItem(tableGroupStorageKey);
-            if (!raw) {
-                setTableGroups({});
-                return;
-            }
-            const parsed = JSON.parse(raw);
-            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                setTableGroups({});
-                return;
-            }
-            setTableGroups(parsed);
-        } catch {
-            setTableGroups({});
-        }
-    }, [tableGroupStorageKey]);
+        if (!restaurantId || !tableGroupStorageKey) return;
+        writeStoredTableGroups(restaurantId, tableGroups);
+    }, [restaurantId, tableGroupStorageKey, tableGroups]);
 
     useEffect(() => {
-        if (!tableGroupCatalogStorageKey) {
-            setGroupCatalog([]);
-            return;
-        }
-        try {
-            const raw = localStorage.getItem(tableGroupCatalogStorageKey);
-            if (!raw) {
-                setGroupCatalog([]);
-                return;
-            }
-            const parsed = JSON.parse(raw);
-            if (!Array.isArray(parsed)) {
-                setGroupCatalog([]);
-                return;
-            }
-            setGroupCatalog(mergeUniqueGroupNames(parsed));
-        } catch {
-            setGroupCatalog([]);
-        }
-    }, [tableGroupCatalogStorageKey]);
-
-    useEffect(() => {
-        if (!tableGroupStorageKey) return;
-        localStorage.setItem(tableGroupStorageKey, JSON.stringify(tableGroups));
-    }, [tableGroupStorageKey, tableGroups]);
-
-    useEffect(() => {
-        if (!tableGroupCatalogStorageKey) return;
-        localStorage.setItem(
-            tableGroupCatalogStorageKey,
-            JSON.stringify(groupCatalog)
-        );
-    }, [groupCatalog, tableGroupCatalogStorageKey]);
+        if (!restaurantId || !tableGroupCatalogStorageKey) return;
+        writeStoredGroupCatalog(restaurantId, groupCatalog);
+    }, [groupCatalog, restaurantId, tableGroupCatalogStorageKey]);
 
     useEffect(() => {
         if (loading) return;
@@ -203,7 +826,13 @@ export default function OwnerTables() {
             .map((table) => normalizeGroupName(tableGroups[String(table.id)] || ""))
             .filter(Boolean);
         if (!usedGroups.length) return;
-        setGroupCatalog((prev) => mergeUniqueGroupNames([...prev, ...usedGroups]));
+        setGroupCatalog((prev) => {
+            const merged = mergeUniqueGroupNames([...prev, ...usedGroups]);
+            if (merged.length === prev.length && merged.every((val, idx) => val === prev[idx])) {
+                return prev;
+            }
+            return merged;
+        });
     }, [tableGroups, tables]);
 
     useEffect(() => {
@@ -236,7 +865,8 @@ export default function OwnerTables() {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        if (!form.tableNo) {
+        const inputTableNo = String(form.tableNo || "").trim();
+        if (!inputTableNo) {
             setError("Table number is required.");
             return;
         }
@@ -245,21 +875,44 @@ export default function OwnerTables() {
             setSubmitting(true);
             setError("");
             const normalizedGroup = normalizeGroupName(form.groupName);
+
+            const existingTable = tables.find(
+                (t) => String(t.tableNo || "").trim().toLowerCase() === inputTableNo.toLowerCase()
+            );
+
             let savedTableId = editingId || null;
 
-            const payload = {
-                tableNo: form.tableNo.trim(),
-                seats: Number(form.seats || 4),
-                isActive: form.isActive,
-            };
-
-            if (editingId) {
+            if (!editingId && existingTable) {
+                savedTableId = existingTable.id;
+                const payload = {
+                    tableNo: existingTable.tableNo,
+                    seats: Number(form.seats || existingTable.seats || 4),
+                    isActive: form.isActive,
+                    section: normalizedGroup || null,
+                };
+                await axios.put(
+                    `${API}/owner/${restaurantId}/tables/${existingTable.id}`,
+                    payload
+                );
+            } else if (editingId) {
+                const payload = {
+                    tableNo: inputTableNo,
+                    seats: Number(form.seats || 4),
+                    isActive: form.isActive,
+                    section: normalizedGroup || null,
+                };
                 const updated = await axios.put(
                     `${API}/owner/${restaurantId}/tables/${editingId}`,
                     payload
                 );
                 savedTableId = updated?.data?.id || editingId;
             } else {
+                const payload = {
+                    tableNo: inputTableNo,
+                    seats: Number(form.seats || 4),
+                    isActive: form.isActive,
+                    section: normalizedGroup || null,
+                };
                 const created = await axios.post(
                     `${API}/owner/${restaurantId}/tables`,
                     payload
@@ -269,24 +922,30 @@ export default function OwnerTables() {
 
             if (savedTableId) {
                 const groupKey = String(savedTableId);
-                setTableGroups((prev) => {
-                    const next = { ...prev };
-                    if (normalizedGroup) {
-                        next[groupKey] = normalizedGroup;
-                    } else {
-                        delete next[groupKey];
-                    }
-                    return next;
-                });
+                const nextTableGroups = { ...tableGroups };
                 if (normalizedGroup) {
-                    setGroupCatalog((prev) =>
-                        mergeUniqueGroupNames([...prev, normalizedGroup])
-                    );
+                    nextTableGroups[groupKey] = normalizedGroup;
+                } else {
+                    delete nextTableGroups[groupKey];
+                }
+                setTableGroups(nextTableGroups);
+                writeStoredTableGroups(restaurantId, nextTableGroups);
+
+                if (normalizedGroup) {
+                    const nextCatalog = mergeUniqueGroupNames([...groupCatalog, normalizedGroup]);
+                    setGroupCatalog(nextCatalog);
+                    writeStoredGroupCatalog(restaurantId, nextCatalog);
                 }
             }
 
             await loadTables();
             resetForm();
+
+            if (activeGroupFilter !== ALL_GROUPS_FILTER && normalizedGroup && activeGroupFilter !== normalizedGroup) {
+                setActiveGroupFilter(normalizedGroup);
+            } else if (activeGroupFilter !== ALL_GROUPS_FILTER && !normalizedGroup) {
+                setActiveGroupFilter(ALL_GROUPS_FILTER);
+            }
         } catch (err) {
             console.log(err);
             setError(getErrorMessage(err, "Failed to save table."));
@@ -373,35 +1032,11 @@ export default function OwnerTables() {
                     <meta charset="utf-8" />
                     <title>Print QR - ${safeTableNo}</title>
                     <style>
-                        body {
-                            margin: 0;
-                            padding: 24px;
-                            font-family: Arial, sans-serif;
-                            color: #111827;
-                        }
-                        .sheet {
-                            max-width: 420px;
-                            margin: 0 auto;
-                            text-align: center;
-                        }
-                        h1 {
-                            margin: 0 0 8px;
-                            font-size: 28px;
-                        }
-                        p {
-                            margin: 0 0 14px;
-                            font-size: 13px;
-                            color: #4b5563;
-                            word-break: break-word;
-                        }
-                        img {
-                            width: 260px;
-                            height: 260px;
-                            padding: 12px;
-                            border: 1px solid #d1d5db;
-                            border-radius: 12px;
-                            background: #ffffff;
-                        }
+                        body { margin: 0; padding: 24px; font-family: Arial, sans-serif; color: #111827; }
+                        .sheet { max-width: 420px; margin: 0 auto; text-align: center; }
+                        h1 { margin: 0 0 8px; font-size: 28px; }
+                        p { margin: 0 0 14px; font-size: 13px; color: #4b5563; word-break: break-word; }
+                        img { width: 260px; height: 260px; padding: 12px; border: 1px solid #d1d5db; border-radius: 12px; background: #ffffff; }
                     </style>
                 </head>
                 <body>
@@ -411,10 +1046,7 @@ export default function OwnerTables() {
                         <p>${safeTarget}</p>
                     </div>
                     <script>
-                        window.onload = function () {
-                            window.print();
-                            window.close();
-                        };
+                        window.onload = function () { window.print(); window.close(); };
                     </script>
                 </body>
             </html>
@@ -422,8 +1054,109 @@ export default function OwnerTables() {
         printWindow.document.close();
     };
 
-    const toggleActionsMenu = (tableId) => {
-        setOpenMenuId((prev) => (prev === tableId ? null : tableId));
+    // Table Session Action Handlers
+    const handleOpenSessionSubmit = async (e) => {
+        e.preventDefault();
+        if (!openSessionTable) return;
+        try {
+            const payload = {
+                restaurantId,
+                guestCount: Number(sessionGuestCount || 1),
+                waiterName: sessionWaiterName,
+            };
+            const res = await axios.post(`${API}/tables/${openSessionTable.id}/session`, payload);
+            const created = res.data?.session;
+            if (created) {
+                setActiveSessions((prev) => ({
+                    ...prev,
+                    [String(openSessionTable.id)]: created,
+                }));
+            }
+            const tableNo = openSessionTable.tableNo;
+            setOpenSessionTable(null);
+            showToast({
+                title: "Table Session Opened",
+                message: `Session started for Table ${tableNo}`,
+                variant: "success",
+            });
+            navigate(`/owner/new-order?table=${encodeURIComponent(tableNo)}`);
+        } catch (err) {
+            setError(getErrorMessage(err, "Failed to open table session."));
+        }
+    };
+
+    const handleGenerateBill = async (session) => {
+        if (!session) return;
+        try {
+            const res = await axios.post(`${API}/tables/sessions/${session.id}/bill`);
+            const updated = res.data?.session;
+            if (updated) {
+                setActiveSessions((prev) => ({
+                    ...prev,
+                    [String(updated.tableId)]: updated,
+                }));
+            }
+            showToast({
+                title: "Bill Generated",
+                message: `Bill calculated for Table ${session.tableNo}`,
+                variant: "success",
+            });
+        } catch (err) {
+            setError(getErrorMessage(err, "Failed to generate bill."));
+        }
+    };
+
+    const handleCloseSession = async (session) => {
+        if (!session) return;
+        const confirmed = window.confirm(`Close session and free Table ${session.tableNo}?`);
+        if (!confirmed) return;
+        try {
+            await axios.post(`${API}/tables/sessions/${session.id}/close`);
+            setActiveSessions((prev) => {
+                const next = { ...prev };
+                delete next[String(session.tableId)];
+                return next;
+            });
+            setViewSessionDetail(null);
+            showToast({
+                title: "Table Session Closed",
+                message: `Table ${session.tableNo} is now AVAILABLE.`,
+                variant: "info",
+            });
+        } catch (err) {
+            setError(getErrorMessage(err, "Failed to close table session."));
+        }
+    };
+
+    const toggleActionsMenu = (tableId, event) => {
+        if (event) {
+            event.stopPropagation();
+        }
+        setOpenMenuId((prev) => {
+            const nextId = prev === tableId ? null : tableId;
+            if (nextId && event?.currentTarget) {
+                const rect = event.currentTarget.getBoundingClientRect();
+                const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
+                const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
+
+                const spaceToLeft = rect.left;
+                const spaceToRight = viewportWidth - rect.right;
+                const spaceBelow = viewportHeight - rect.bottom;
+                const spaceAbove = rect.top;
+
+                const popupWidth = 220;
+                const popupHeight = 300;
+
+                const posX = (spaceToLeft < popupWidth || (spaceToRight > spaceToLeft && spaceToLeft < 240)) ? "left" : "right";
+                const posY = (spaceBelow < popupHeight && spaceAbove > spaceBelow) ? "top" : "bottom";
+
+                setMenuPlacement((prevPlacement) => ({
+                    ...prevPlacement,
+                    [tableId]: { x: posX, y: posY },
+                }));
+            }
+            return nextId;
+        });
     };
 
     const createGroup = () => {
@@ -433,11 +1166,37 @@ export default function OwnerTables() {
             return;
         }
         setError("");
-        setGroupCatalog((prev) =>
-            mergeUniqueGroupNames([...prev, normalized])
-        );
+        const nextCatalog = mergeUniqueGroupNames([...groupCatalog, normalized]);
+        setGroupCatalog(nextCatalog);
+        writeStoredGroupCatalog(restaurantId, nextCatalog);
         setForm((prev) => ({ ...prev, groupName: normalized }));
         setNewGroupName("");
+    };
+
+    const renameGroup = (oldName, newName) => {
+        const oldNorm = normalizeGroupName(oldName);
+        const newNorm = normalizeGroupName(newName);
+        if (!newNorm || isSameGroupName(oldNorm, newNorm)) return;
+
+        const nextCatalog = mergeUniqueGroupNames(
+            groupCatalog.map((g) => (isSameGroupName(g, oldNorm) ? newNorm : g))
+        );
+        setGroupCatalog(nextCatalog);
+        writeStoredGroupCatalog(restaurantId, nextCatalog);
+
+        const nextGroups = {};
+        for (const [key, val] of Object.entries(tableGroups)) {
+            nextGroups[key] = isSameGroupName(val, oldNorm) ? newNorm : val;
+        }
+        setTableGroups(nextGroups);
+        writeStoredTableGroups(restaurantId, nextGroups);
+
+        if (isSameGroupName(activeGroupFilter, oldNorm)) {
+            setActiveGroupFilter(newNorm);
+        }
+        if (isSameGroupName(form.groupName, oldNorm)) {
+            setForm((prev) => ({ ...prev, groupName: newNorm }));
+        }
     };
 
     const deleteGroup = (groupName) => {
@@ -456,21 +1215,19 @@ export default function OwnerTables() {
         if (!approved) return;
 
         setError("");
-        setGroupCatalog((prev) =>
-            prev.filter((name) => !isSameGroupName(name, normalized))
-        );
-        setTableGroups((prev) => {
-            const next = {};
-            let changed = false;
-            for (const [tableId, value] of Object.entries(prev)) {
-                if (isSameGroupName(value, normalized)) {
-                    changed = true;
-                    continue;
-                }
-                next[tableId] = value;
+        const nextCatalog = groupCatalog.filter((name) => !isSameGroupName(name, normalized));
+        setGroupCatalog(nextCatalog);
+        writeStoredGroupCatalog(restaurantId, nextCatalog);
+
+        const nextGroups = {};
+        for (const [tableId, value] of Object.entries(tableGroups)) {
+            if (isSameGroupName(value, normalized)) {
+                continue;
             }
-            return changed ? next : prev;
-        });
+            nextGroups[tableId] = value;
+        }
+        setTableGroups(nextGroups);
+        writeStoredTableGroups(restaurantId, nextGroups);
 
         if (isSameGroupName(form.groupName, normalized)) {
             setForm((prev) => ({ ...prev, groupName: "" }));
@@ -480,7 +1237,9 @@ export default function OwnerTables() {
         }
     };
 
-    const getTableGroup = (table) => normalizeGroupName(tableGroups[String(table.id)] || "");
+    const getTableGroup = useCallback((table) => {
+        return resolveTableGroup(table, tableGroups, groupCatalog);
+    }, [tableGroups, groupCatalog]);
 
     const groupOptions = useMemo(() => {
         const fromTables = tables.map((table) => getTableGroup(table)).filter(Boolean);
@@ -518,58 +1277,101 @@ export default function OwnerTables() {
         return matchesSearch && matchesGroup;
     });
 
+    const groupedTableEntries = useMemo(() => {
+        const map = {};
+        filteredTables.forEach((table) => {
+            const group = getTableGroup(table);
+            if (!map[group]) map[group] = [];
+            map[group].push(table);
+        });
+        return Object.entries(map).sort(([a], [b]) =>
+            a.localeCompare(b, undefined, { sensitivity: "base" })
+        );
+    }, [filteredTables, getTableGroup]);
+
+    useEffect(() => {
+        if (tables.length > 0) {
+            cacheTablesOffline(restaurantId || 1, tables, activeSessions);
+        } else {
+            getOfflineTables(restaurantId || 1).then((cached) => {
+                if (cached?.tables?.length) {
+                    setTables(cached.tables);
+                    if (cached.activeSessions) setActiveSessions(cached.activeSessions);
+                }
+            });
+        }
+    }, [tables, activeSessions, restaurantId]);
+
     return (
-        <section>
-            <h3 className="text-3xl font-bold">Tables & QR</h3>
-            <p className="mt-1 text-sm text-gray-400">
-                Add tables, manage active status, and share QR links for customer ordering.
-            </p>
+        <section className="space-y-4">
+            <OfflineConflictModal />
 
-            {error && (
-                <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-                    {error}
+            {/* Header & Controls */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--app-border)]/40 pb-3">
+                <div>
+                    <div className="flex items-center gap-3">
+                        <OwnerMenuButton />
+                        <h3 className="text-3xl font-bold">Tables & Live Sessions</h3>
+                    </div>
+                    <p className="mt-1 text-sm theme-muted">
+                        Manage live table sessions, running KOT totals, guest counts, and share QR ordering links.
+                    </p>
                 </div>
-            )}
-
-            <div className="mt-5 flex w-full justify-end">
-                <div className="w-full max-w-[520px]">
-                    <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px]">
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                         <input
                             value={newGroupName}
                             onChange={(e) => setNewGroupName(e.target.value)}
-                            placeholder="Create new table group"
-                            className="w-full rounded-xl border border-white/10 bg-[#0f172a] px-4 py-2.5 outline-none transition focus:border-orange-400/40 focus:ring-2 focus:ring-orange-400/20"
+                            placeholder="New table group..."
+                            className="w-36 sm:w-44 rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-3 py-2 text-xs text-[color:var(--app-text)] outline-none focus:border-orange-500 placeholder:text-[color:var(--app-muted)]"
                         />
                         <button
                             type="button"
                             onClick={createGroup}
-                            className="rounded-xl bg-orange-500 px-4 py-2.5 font-semibold text-black transition hover:bg-orange-400"
+                            className="rounded-xl bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 transition"
                         >
                             Create
                         </button>
                     </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setQrStudioTable(tables[0] || null);
+                            setShowQrStudioModal(true);
+                        }}
+                        className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs rounded-xl shadow transition"
+                    >
+                        <span>QR Code Studio</span>
+                    </button>
                 </div>
             </div>
 
-            <div className="mx-auto mt-6 flex w-full max-w-6xl flex-col gap-3 xl:flex-row xl:items-start">
-                <div className="w-full shrink-0 xl:w-[300px]">
+            {error && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-300">
+                    {error}
+                </div>
+            )}
+
+            {/* Inline Table Management Toolbar (No Outer Box) */}
+            <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+                <div className="w-full lg:w-60 shrink-0">
                     <input
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         placeholder="Search table number..."
-                        className="w-full rounded-2xl border border-white/10 bg-[#111827] px-4 py-3 outline-none transition focus:border-orange-400/40 focus:ring-2 focus:ring-orange-400/20"
+                        className="w-full rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-3.5 py-2 text-xs text-[color:var(--app-text)] outline-none focus:border-orange-500 placeholder:text-[color:var(--app-muted)]"
                     />
                 </div>
 
                 <form
                     onSubmit={handleSubmit}
-                    className="grid w-full flex-1 gap-3 rounded-2xl border border-white/10 bg-[#111827] p-4 md:grid-cols-[minmax(0,1.6fr)_120px_minmax(0,1.2fr)_170px_auto]"
+                    className="flex flex-wrap items-center gap-2 w-full flex-1"
                 >
                     <input
                         value={form.tableNo}
                         onChange={(e) => setForm((prev) => ({ ...prev, tableNo: e.target.value }))}
-                        placeholder="Table No (e.g., T1)"
-                        className="rounded-xl border border-white/10 bg-[#0f172a] px-3 py-2 outline-none transition focus:border-orange-400/40 focus:ring-2 focus:ring-orange-400/20"
+                        placeholder="Table No (e.g. T1)"
+                        className="w-32 rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-3 py-2 text-xs text-[color:var(--app-text)] outline-none focus:border-orange-500 placeholder:text-[color:var(--app-muted)]"
                     />
                     <input
                         type="number"
@@ -577,12 +1379,12 @@ export default function OwnerTables() {
                         value={form.seats}
                         onChange={(e) => setForm((prev) => ({ ...prev, seats: e.target.value }))}
                         placeholder="Seats"
-                        className="rounded-xl border border-white/10 bg-[#0f172a] px-3 py-2 outline-none transition focus:border-orange-400/40 focus:ring-2 focus:ring-orange-400/20"
+                        className="w-20 rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-3 py-2 text-xs text-[color:var(--app-text)] outline-none focus:border-orange-500 placeholder:text-[color:var(--app-muted)]"
                     />
                     <select
                         value={form.groupName}
                         onChange={(e) => setForm((prev) => ({ ...prev, groupName: e.target.value }))}
-                        className="rounded-xl border border-white/10 bg-[#0f172a] px-3 py-2 outline-none transition focus:border-orange-400/40 focus:ring-2 focus:ring-orange-400/20"
+                        className="w-36 rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-3 py-2 text-xs text-[color:var(--app-text)] outline-none focus:border-orange-500"
                     >
                         <option value="">Select group</option>
                         {groupOptions.map((group) => (
@@ -591,7 +1393,7 @@ export default function OwnerTables() {
                             </option>
                         ))}
                     </select>
-                    <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#0f172a] px-3 py-2 text-sm text-gray-300">
+                    <label className="flex items-center gap-1.5 px-2 py-2 text-xs font-medium text-[color:var(--app-text)]">
                         <input
                             type="checkbox"
                             checked={form.isActive}
@@ -599,12 +1401,13 @@ export default function OwnerTables() {
                         />
                         Active
                     </label>
-                    <div className="flex gap-2 md:justify-end">
+                    <div className="flex items-center gap-2 sm:ml-auto">
+                        <OfflineStatusBar />
                         {editingId && (
                             <button
                                 type="button"
                                 onClick={resetForm}
-                                className="rounded-xl border border-white/20 px-4 py-2"
+                                className="rounded-xl border border-[color:var(--app-border)]/40 px-3 py-2 text-xs text-[color:var(--app-text)] hover:bg-black/5 dark:hover:bg-white/5"
                             >
                                 Cancel
                             </button>
@@ -612,25 +1415,110 @@ export default function OwnerTables() {
                         <button
                             type="submit"
                             disabled={submitting}
-                            className="rounded-xl bg-orange-500 px-4 py-2 font-semibold text-black disabled:opacity-70"
+                            className="rounded-xl bg-orange-500 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-600 transition disabled:opacity-70"
                         >
                             {submitting ? "Saving..." : editingId ? "Update Table" : "Add Table"}
                         </button>
                     </div>
                 </form>
             </div>
-            <p className="mx-auto mt-2 w-full max-w-5xl text-xs text-gray-400">
-                Create your own group names, then assign each table to a group.
-            </p>
 
-            <div className="mx-auto mt-3 flex w-full max-w-5xl flex-wrap items-center gap-2">
+            {/* View Switcher Bar & Status Legend (No Outer Box Card) */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--app-border)]/40 pb-3 pt-1">
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-1.5">
+                    <button
+                        type="button"
+                        onClick={() => setViewMode("FLOOR_PLAN")}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                            viewMode === "FLOOR_PLAN"
+                                ? "bg-[color:var(--app-primary)] text-white shadow-sm"
+                                : "theme-muted hover:text-[color:var(--app-text)] hover:bg-black/5 dark:hover:bg-white/5"
+                        }`}
+                    >
+                        <span>🗺️</span> Floor Plan View
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setViewMode("GRID")}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                            viewMode === "GRID"
+                                ? "bg-[color:var(--app-primary)] text-white shadow-sm"
+                                : "theme-muted hover:text-[color:var(--app-text)] hover:bg-black/5 dark:hover:bg-white/5"
+                        }`}
+                    >
+                        <span>📋</span> Grid List View
+                    </button>
+                    <Link
+                        to="/owner/reservations"
+                        className="flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 text-xs font-bold text-blue-500 transition hover:bg-blue-500/20"
+                    >
+                        <span>📅</span> Reservations
+                    </Link>
+                </div>
+
+                {/* Status Legend */}
+                <div className="hidden sm:flex items-center gap-3 text-[11px] font-semibold theme-muted">
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Available
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full bg-blue-500" /> Reserved
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" /> Occupied
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full bg-purple-500" /> Billing
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full bg-cyan-500" /> Paid
+                    </span>
+                </div>
+
+                {/* Layout Editor Controls */}
+                {viewMode === "FLOOR_PLAN" && (
+                    <div className="flex items-center gap-2">
+                        {!isEditingLayout ? (
+                            <button
+                                type="button"
+                                onClick={handleStartEditLayout}
+                                className="flex items-center gap-1.5 rounded-xl border border-orange-500/40 bg-orange-500/10 px-3.5 py-1.5 text-xs font-bold text-orange-500 hover:bg-orange-500/20"
+                            >
+                                <span>✏️</span> Edit Floor Layout
+                            </button>
+                        ) : (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={handleSaveLayout}
+                                    disabled={submittingLayout}
+                                    className="rounded-xl bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
+                                >
+                                    {submittingLayout ? "Saving..." : "💾 Save Layout"}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleCancelLayout}
+                                    className="rounded-xl border border-[color:var(--app-border)]/40 px-3 py-1.5 text-xs theme-muted hover:bg-black/5 dark:hover:bg-white/5"
+                                >
+                                    Cancel
+                                </button>
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Section Filter Pills */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                     type="button"
                     onClick={() => setActiveGroupFilter(ALL_GROUPS_FILTER)}
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                    className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
                         activeGroupFilter === ALL_GROUPS_FILTER
-                            ? "border-orange-500/70 bg-orange-500 text-black"
-                            : "border-white/10 bg-[#111827] text-gray-300 hover:border-orange-400/40"
+                            ? "bg-orange-500 text-white shadow-sm"
+                            : "border border-[color:var(--app-border)]/40 theme-muted hover:bg-black/5 dark:hover:bg-white/5"
                     }`}
                 >
                     All ({tables.length})
@@ -640,8 +1528,8 @@ export default function OwnerTables() {
                         key={group}
                         className={`inline-flex items-center overflow-hidden rounded-full border ${
                             activeGroupFilter === group
-                                ? "border-orange-500/70"
-                                : "border-white/10"
+                                ? "border-orange-500"
+                                : "border-[color:var(--app-border)]/40"
                         }`}
                     >
                         <button
@@ -649,186 +1537,1049 @@ export default function OwnerTables() {
                             onClick={() => setActiveGroupFilter(group)}
                             className={`px-3 py-1 text-xs font-semibold transition ${
                                 activeGroupFilter === group
-                                    ? "bg-orange-500 text-black"
-                                    : "bg-[#111827] text-gray-300 hover:border-orange-400/40"
+                                    ? "bg-orange-500 text-white"
+                                    : "theme-muted hover:bg-black/5 dark:hover:bg-white/5"
                             }`}
                         >
                             {group} ({groupCounts[group] || 0})
                         </button>
                         <button
                             type="button"
+                            onClick={() => {
+                                const newName = window.prompt(`Rename group "${group}" to:`, group);
+                                if (newName && newName.trim() && newName.trim() !== group) {
+                                    renameGroup(group, newName.trim());
+                                }
+                            }}
+                            className="border-l border-[color:var(--app-border)]/40 px-1.5 py-1 text-xs theme-muted transition hover:text-orange-500 hover:bg-black/5 dark:hover:bg-white/5"
+                            aria-label={`Rename group ${group}`}
+                            title={`Rename group ${group}`}
+                        >
+                            ✎
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => deleteGroup(group)}
-                            className="border-l border-white/10 bg-[#0f172a] px-2 py-1 text-xs text-red-300 transition hover:bg-red-500/20 hover:text-red-200"
+                            className="border-l border-[color:var(--app-border)]/40 px-2 py-1 text-xs text-red-500 transition hover:bg-red-500/20"
                             aria-label={`Delete group ${group}`}
                             title={`Delete group ${group}`}
                         >
-                            x
+                            ✕
                         </button>
                     </div>
                 ))}
             </div>
 
-            <div className="mt-6 grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(250px,1fr))]">
-                {!loading &&
-                    filteredTables.map((table) => {
-                        const target = table.qrCodeUrl || buildTargetUrl(table.tableNo);
-                        const debugTarget = buildDebugTargetUrl(table.tableNo);
-                        const image = qrImageUrl(target);
-                        const tableGroup = getTableGroup(table);
-
-                        return (
-                            <article
-                                key={table.id}
-                                className="rounded-2xl border border-white/10 bg-[#111827] p-3 transition hover:-translate-y-0.5 hover:border-orange-400/30"
+            {/* VISUAL FLOOR PLAN CANVAS DISPLAY */}
+            {viewMode === "FLOOR_PLAN" && !loading && (
+                <div className="mt-4 flex w-full flex-col gap-3">
+                    {/* Zoom & Canvas Inspector Bar */}
+                    <div className="flex items-center justify-between rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-3 py-1.5 text-xs">
+                        <span className="font-semibold text-[color:var(--app-text)]">
+                            {isEditingLayout ? "✏️ Drag tables to position. Click table to edit shape/rotation." : "📍 Live Spatial Floor View"}
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className="theme-muted">Zoom:</span>
+                            <button
+                                type="button"
+                                onClick={() => setZoomLevel(prev => Math.max(0.6, prev - 0.1))}
+                                className="h-6 w-6 rounded-md border border-[color:var(--app-border)]/40 bg-transparent font-bold hover:bg-black/5 dark:hover:bg-white/5"
                             >
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="text-xl font-semibold">{table.tableNo}</p>
-                                        <span className="mt-1 inline-flex rounded-full border border-white/10 bg-black/10 px-2 py-0.5 text-[11px] text-gray-300">
-                                            {tableGroup || "No Group"}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <span
-                                            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-                                                table.isActive
-                                                    ? "border-emerald-500/40 bg-emerald-100 text-emerald-700 shadow-sm"
-                                                    : "border-gray-400/40 bg-gray-100 text-gray-600"
-                                            }`}
-                                        >
-                                            <span
-                                                className={`h-1.5 w-1.5 rounded-full ${
-                                                    table.isActive ? "bg-emerald-600" : "bg-gray-500"
-                                                }`}
-                                            />
-                                            {table.isActive ? "Active" : "Inactive"}
-                                        </span>
-                                        <div className="relative" data-table-actions-menu>
-                                            <button
-                                                type="button"
-                                                onClick={() => toggleActionsMenu(table.id)}
-                                                className="rounded-lg border border-white/10 px-2 py-0.5 text-lg leading-none text-gray-200 hover:bg-white/10"
-                                                aria-label={`Open actions for ${table.tableNo}`}
-                                            >
-                                                &#8942;
-                                            </button>
-                                            {openMenuId === table.id && (
-                                                <div className="absolute right-0 z-30 mt-2 w-40 max-h-52 overflow-y-auto rounded-xl border border-white/10 bg-[#0b1220] p-1.5 shadow-2xl">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            startEdit(table);
-                                                            setOpenMenuId(null);
-                                                        }}
-                                                        className={actionMenuItemClass}
-                                                    >
-                                                        Edit
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setActiveState(table, true);
-                                                            setOpenMenuId(null);
-                                                        }}
-                                                        disabled={table.isActive}
-                                                        className={`${actionMenuItemClass} disabled:cursor-not-allowed disabled:opacity-50`}
-                                                    >
-                                                        Enable
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setActiveState(table, false);
-                                                            setOpenMenuId(null);
-                                                        }}
-                                                        disabled={!table.isActive}
-                                                        className={`${actionMenuItemClass} disabled:cursor-not-allowed disabled:opacity-50`}
-                                                    >
-                                                        Disable
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            copyQrLink(table);
-                                                            setOpenMenuId(null);
-                                                        }}
-                                                        className={actionMenuItemClass}
-                                                    >
-                                                        Copy Link
-                                                    </button>
-                                                    <a
-                                                        href={target}
-                                                        target="_blank"
-                                                        rel="noreferrer"
-                                                        onClick={() => setOpenMenuId(null)}
-                                                        className={`block ${actionMenuItemClass}`}
-                                                    >
-                                                        Open Menu
-                                                    </a>
-                                                    <a
-                                                        href={image}
-                                                        download={`${table.tableNo}-qr.png`}
-                                                        onClick={() => setOpenMenuId(null)}
-                                                        className={`block ${actionMenuItemClass}`}
-                                                    >
-                                                        Download QR
-                                                    </a>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            printQr(table);
-                                                            setOpenMenuId(null);
-                                                        }}
-                                                        className={actionMenuItemClass}
-                                                    >
-                                                        Print QR
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            handleDelete(table.id);
-                                                            setOpenMenuId(null);
-                                                        }}
-                                                        className={actionMenuItemClass}
-                                                    >
-                                                        Delete
-                                                    </button>
-                                                </div>
-                                            )}
+                                -
+                            </button>
+                            <span className="w-10 text-center font-semibold text-orange-500">{Math.round(zoomLevel * 100)}%</span>
+                            <button
+                                type="button"
+                                onClick={() => setZoomLevel(prev => Math.min(1.5, prev + 0.1))}
+                                className="h-6 w-6 rounded-md border border-[color:var(--app-border)]/40 bg-transparent font-bold hover:bg-black/5 dark:hover:bg-white/5"
+                            >
+                                +
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setZoomLevel(1)}
+                                className="rounded-md border border-[color:var(--app-border)]/40 px-2 py-0.5 text-[11px] theme-muted hover:text-[color:var(--app-text)]"
+                            >
+                                Reset
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Inspector Toolbar for Selected Table in Edit Mode */}
+                    {isEditingLayout && selectedLayoutTableId && editedLayoutTables[selectedLayoutTableId] && (
+                        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-orange-500/40 bg-orange-950/30 p-3 text-xs">
+                            <span className="font-bold text-orange-400">
+                                Editing Table {editedLayoutTables[selectedLayoutTableId].tableNo}:
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <label className="text-gray-300 font-semibold">Shape:</label>
+                                <select
+                                    value={editedLayoutTables[selectedLayoutTableId].shape}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setEditedLayoutTables(prev => ({
+                                            ...prev,
+                                            [selectedLayoutTableId]: { ...prev[selectedLayoutTableId], shape: val }
+                                        }));
+                                    }}
+                                    className="rounded-lg border border-white/10 bg-[#111827] px-2 py-1 text-white outline-none"
+                                >
+                                    <option value="RECTANGLE">Rectangle ▭</option>
+                                    <option value="ROUND">Circle ◯</option>
+                                    <option value="SQUARE">Square ▢</option>
+                                </select>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-gray-300 font-semibold">Rotate:</label>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setEditedLayoutTables(prev => ({
+                                            ...prev,
+                                            [selectedLayoutTableId]: {
+                                                ...prev[selectedLayoutTableId],
+                                                rotation: ((prev[selectedLayoutTableId].rotation || 0) + 90) % 360
+                                            }
+                                        }));
+                                    }}
+                                    className="rounded-lg border border-white/10 bg-white/10 px-2.5 py-1 font-bold text-white hover:bg-white/20"
+                                >
+                                    🔄 {editedLayoutTables[selectedLayoutTableId].rotation || 0}°
+                                </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-gray-300 font-semibold">Section:</label>
+                                <select
+                                    value={editedLayoutTables[selectedLayoutTableId].section}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setEditedLayoutTables(prev => ({
+                                            ...prev,
+                                            [selectedLayoutTableId]: { ...prev[selectedLayoutTableId], section: val }
+                                        }));
+                                    }}
+                                    className="rounded-lg border border-white/10 bg-[#111827] px-2 py-1 text-white outline-none"
+                                >
+                                    {groupOptions.map(g => (
+                                        <option key={g} value={g}>{g}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Interactive Spatial Canvas */}
+                    <div className="relative w-full overflow-auto rounded-2xl border border-white/10 bg-[#090d16] p-4 shadow-2xl">
+                        <div
+                            style={{ transform: `scale(${zoomLevel})`, transformOrigin: "top left" }}
+                            className="relative min-w-[950px] h-[550px] rounded-xl border border-white/5 bg-[radial-gradient(#1e293b_1.5px,transparent_1.5px)] [background-size:24px_24px] select-none"
+                            onMouseMove={(e) => {
+                                if (!isEditingLayout || !dragState) return;
+                                const canvasRect = e.currentTarget.getBoundingClientRect();
+                                const rawX = (e.clientX - canvasRect.left) / zoomLevel - dragState.offsetX;
+                                const rawY = (e.clientY - canvasRect.top) / zoomLevel - dragState.offsetY;
+                                const snapX = Math.max(10, Math.min(820, Math.round(rawX / 10) * 10));
+                                const snapY = Math.max(10, Math.min(450, Math.round(rawY / 10) * 10));
+
+                                setEditedLayoutTables(prev => ({
+                                    ...prev,
+                                    [dragState.tableId]: {
+                                        ...prev[dragState.tableId],
+                                        positionX: snapX,
+                                        positionY: snapY,
+                                    }
+                                }));
+                            }}
+                            onMouseUp={() => setDragState(null)}
+                            onMouseLeave={() => setDragState(null)}
+                        >
+                            {filteredTables.map((table, index) => {
+                                const session = activeSessions[String(table.id)];
+                                const sessionStatus = session ? session.status : "AVAILABLE";
+                                const isOccupied = sessionStatus === "OPEN";
+                                const isBilling = sessionStatus === "BILLING";
+                                const isPaid = sessionStatus === "PAID";
+                                const isAvailable = !session;
+
+                                const layoutData = isEditingLayout && editedLayoutTables[table.id]
+                                    ? editedLayoutTables[table.id]
+                                    : {
+                                        positionX: table.positionX !== null && table.positionX !== undefined ? table.positionX : (index % 5) * 170 + 30,
+                                        positionY: table.positionY !== null && table.positionY !== undefined ? table.positionY : Math.floor(index / 5) * 140 + 30,
+                                        width: table.width || 130,
+                                        height: table.height || 100,
+                                        shape: table.shape || "RECTANGLE",
+                                        rotation: table.rotation || 0,
+                                        section: table.section || getTableGroup(table),
+                                    };
+
+                                const isSelectedInEdit = isEditingLayout && selectedLayoutTableId === table.id;
+
+                                const shapeClasses =
+                                    layoutData.shape === "ROUND"
+                                        ? "rounded-full"
+                                        : layoutData.shape === "SQUARE"
+                                        ? "rounded-2xl aspect-square"
+                                        : "rounded-2xl";
+
+                                const resForTable = reservations.find((r) => Number(r.tableId) === Number(table.id));
+
+                                return (
+                                    <div
+                                        key={table.id}
+                                        style={{
+                                            position: "absolute",
+                                            left: `${layoutData.positionX}px`,
+                                            top: `${layoutData.positionY}px`,
+                                            width: `${layoutData.width}px`,
+                                            height: `${layoutData.height}px`,
+                                            transform: `rotate(${layoutData.rotation}deg)`,
+                                        }}
+                                        onMouseDown={(e) => {
+                                            if (!isEditingLayout) return;
+                                            e.stopPropagation();
+                                            setSelectedLayoutTableId(table.id);
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            setDragState({
+                                                tableId: table.id,
+                                                offsetX: (e.clientX - rect.left) / zoomLevel,
+                                                offsetY: (e.clientY - rect.top) / zoomLevel,
+                                            });
+                                        }}
+                                        className={`group flex flex-col justify-between p-2.5 border transition-all cursor-pointer ${shapeClasses} ${
+                                            isSelectedInEdit
+                                                ? "ring-2 ring-orange-500 shadow-orange-500/50 shadow-xl z-30"
+                                                : ""
+                                        } ${
+                                            isOccupied
+                                                ? "border-blue-500/80 bg-gradient-to-br from-blue-950/80 via-[#0f172a] to-blue-900/40 text-blue-200 shadow-blue-500/20 shadow-lg"
+                                                : isBilling
+                                                ? "border-amber-500/80 bg-gradient-to-br from-amber-950/80 via-[#0f172a] to-amber-900/40 text-amber-200 shadow-amber-500/20 shadow-lg"
+                                                : isPaid
+                                                ? "border-cyan-500/80 bg-gradient-to-br from-cyan-950/80 via-[#0f172a] to-cyan-900/40 text-cyan-200"
+                                                : resForTable || table.isReserved
+                                                ? "border-purple-500/80 bg-gradient-to-br from-purple-950/80 via-[#0f172a] to-purple-900/40 text-purple-200 shadow-purple-500/20 shadow-lg"
+                                                : "border-emerald-500/40 bg-gradient-to-br from-[#0f172a] to-emerald-950/20 text-gray-200 hover:border-emerald-400"
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-extrabold text-sm tracking-tight">{table.tableNo}</span>
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 font-bold text-gray-300">
+                                                🪑 {table.seats}
+                                            </span>
                                         </div>
+
+                                        {(!isAvailable && (table.assignedWaiterName || session?.waiterName)) && (
+                                            <div className="text-[9px] text-orange-400 font-semibold truncate flex items-center gap-0.5 my-0.5" title={`Assigned: ${table.assignedWaiterName || session?.waiterName}`}>
+                                                <span>👤</span>
+                                                <span className="truncate">{table.assignedWaiterName || session?.waiterName}</span>
+                                            </div>
+                                        )}
+
+                                        {session ? (
+                                            <div className="text-center my-0.5">
+                                                <p className="text-sm font-black text-emerald-400 tabular-nums">{formatMoney(session.total)}</p>
+                                                <p className="text-[10px] text-amber-300">{formatAge(session.openedAt)}</p>
+                                            </div>
+                                        ) : resForTable ? (
+                                            <div className="text-center my-0.5">
+                                                <span className="inline-block rounded bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-bold text-blue-300">
+                                                    📅 {resForTable.guestName} ({resForTable.reservationTime})
+                                                </span>
+                                            </div>
+                                        ) : (
+                                            <p className="text-[10px] text-center text-emerald-400/80 font-semibold">Available</p>
+                                        )}
+
+                                        {!isEditingLayout && (
+                                            <div className="flex items-center justify-between text-[10px] pt-1 border-t border-white/10 gap-1">
+                                                {isAvailable ? (
+                                                    resForTable ? (
+                                                        <button
+                                                            type="button"
+                                                            disabled={seatingReservationId === resForTable.id}
+                                                            onClick={(e) => { e.stopPropagation(); handleSeatReservation(resForTable.id); }}
+                                                            className="w-full rounded bg-blue-600/90 py-0.5 font-bold text-white hover:bg-blue-500 disabled:opacity-50"
+                                                        >
+                                                            {seatingReservationId === resForTable.id ? "Seating..." : "Seat Guest"}
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); setOpenSessionTable(table); }}
+                                                            className="w-full rounded bg-emerald-600/80 py-0.5 font-bold text-white hover:bg-emerald-500"
+                                                        >
+                                                            + Open
+                                                        </button>
+                                                    )
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); navigate(`/owner/new-order?table=${encodeURIComponent(table.tableNo)}`); }}
+                                                        className="w-full rounded bg-orange-500/80 py-0.5 font-bold text-black hover:bg-orange-400"
+                                                    >
+                                                        Order
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {loading ? (
+                <div className="mt-4 rounded-xl border border-[color:var(--app-border)]/40 p-5 theme-muted text-sm text-center">
+                    Loading live table sessions...
+                </div>
+            ) : filteredTables.length === 0 ? (
+                <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[color:var(--app-border)]/40 p-6 text-center theme-muted text-sm">
+                    <p>
+                        {tables.length === 0
+                            ? "No tables yet. Add your first table above."
+                            : `No tables match your search/group filter${
+                                  activeGroupFilter !== ALL_GROUPS_FILTER ? ` ("${activeGroupFilter}")` : ""
+                              }.`}
+                    </p>
+                </div>
+            ) : (
+                <div className="mt-3 flex flex-col gap-3">
+                    {groupedTableEntries.map(([groupName, groupTables]) => {
+                        const activeCount = groupTables.filter((t) => t.isActive).length;
+                        return (
+                            <section key={groupName} className="flex flex-col gap-2 py-0.5">
+                                <div className="flex items-center justify-between border-b border-[color:var(--app-border)]/40 pb-1.5">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="text-sm font-extrabold uppercase tracking-widest text-orange-500">
+                                            {groupName}
+                                        </span>
+                                        <span className="rounded-full bg-black/5 dark:bg-white/10 px-2.5 py-0.5 text-xs font-bold theme-muted">
+                                            {groupTables.length} table{groupTables.length === 1 ? "" : "s"}
+                                        </span>
+                                    </div>
+                                    <span className="text-xs font-medium text-emerald-500">
+                                        {activeCount} active
+                                    </span>
                                 </div>
 
-                                <p className="mt-1 text-sm text-gray-400">{table.seats} seats</p>
+                                <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(270px,1fr))]">
+                                    {groupTables.map((table) => {
+                                        const target = table.qrCodeUrl || buildTargetUrl(table.tableNo);
+                                        const debugTarget = buildDebugTargetUrl(table.tableNo);
+                                        const image = qrImageUrl(target);
+                                        const tableGroup = getTableGroup(table);
+                                        const session = activeSessions[String(table.id)];
+                                        const sessionStatus = session ? session.status : "AVAILABLE";
+                                        const isOccupied = sessionStatus === "OPEN";
+                                        const isBilling = sessionStatus === "BILLING";
+                                        const isPaid = sessionStatus === "PAID";
+                                        const isAvailable = !session;
+                                        const resForTable = reservations.find((r) =>
+                                            Number(r.tableId) === Number(table.id) ||
+                                            (r.tableNo && String(r.tableNo).trim().toLowerCase() === String(table.tableNo).trim().toLowerCase()) ||
+                                            (r.table?.tableNo && String(r.table.tableNo).trim().toLowerCase() === String(table.tableNo).trim().toLowerCase())
+                                        );
 
-                                <img src={image} alt={`${table.tableNo} QR`} className="mt-3 h-32 w-32 rounded-xl bg-white p-1.5 sm:h-36 sm:w-36" />
+                                        return (
+                                            <article
+                                                key={table.id}
+                                                className={`relative flex flex-col justify-between rounded-xl border p-3.5 transition ${
+                                                    isOccupied
+                                                        ? "border-blue-500/50 bg-blue-500/5"
+                                                        : isBilling
+                                                        ? "border-amber-500/50 bg-amber-500/5"
+                                                        : isPaid
+                                                        ? "border-cyan-500/50 bg-cyan-500/5"
+                                                        : resForTable || table.isReserved
+                                                        ? "border-purple-500/50 bg-purple-500/5"
+                                                        : "border-[color:var(--app-border)]/40 hover:border-orange-500/50"
+                                                }`}
+                                            >
+                                                <div className="flex items-start justify-between">
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <p className="text-2xl font-bold">{table.tableNo}</p>
+                                                            <span className="text-xs theme-muted">({table.seats} seats)</span>
+                                                        </div>
+                                                        <select
+                                                            value={tableGroup}
+                                                            onChange={(e) => {
+                                                                const newGrp = normalizeGroupName(e.target.value);
+                                                                setTableGroups((prev) => ({
+                                                                    ...prev,
+                                                                    [String(table.id)]: newGrp,
+                                                                }));
+                                                            }}
+                                                            className="mt-1 rounded-lg border border-[color:var(--app-border)]/40 bg-transparent px-2 py-0.5 text-[11px] text-orange-500 outline-none"
+                                                            title="Change Table Group"
+                                                        >
+                                                            {groupOptions.map((g) => (
+                                                                <option key={g} value={g}>
+                                                                    {g}
+                                                                </option>
+                                                            ))}
+                                                        </select>
 
-                                <a
-                                    href={debugTarget}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-orange-400/30 bg-orange-500/10 px-3 py-2 text-xs font-semibold text-orange-200 transition hover:bg-orange-500/20"
-                                >
-                                    Open debug link
-                                </a>
-                            </article>
+                                                        {/* Server Assignment Badge / + Server Button */}
+                                                        <div className="mt-1.5 flex items-center gap-1">
+                                                            {(table.assignedWaiterName || session?.waiterName) ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setAssignServerModalTable(table);
+                                                                        setSelectedWaiterIdToAssign(String(table.assignedWaiterId || session?.waiterId || ""));
+                                                                    }}
+                                                                    className="inline-flex items-center gap-1 rounded-full border border-orange-500/30 bg-orange-500/10 px-2 py-0.5 text-[10px] font-medium text-orange-400 hover:bg-orange-500/20 transition max-w-[140px] truncate"
+                                                                    title={`Assigned Server: ${table.assignedWaiterName || session?.waiterName}. Click to change or remove.`}
+                                                                >
+                                                                    <span className="shrink-0">👤</span>
+                                                                    <span className="truncate">{table.assignedWaiterName || session?.waiterName}</span>
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setAssignServerModalTable(table);
+                                                                        setSelectedWaiterIdToAssign("");
+                                                                    }}
+                                                                    className="inline-flex items-center gap-1 rounded-full border border-dashed border-[color:var(--app-border)]/60 bg-black/5 dark:bg-white/5 px-2 py-0.5 text-[10px] font-medium theme-muted hover:text-orange-400 hover:border-orange-500/50 transition"
+                                                                    title={`Assign server to Table ${table.tableNo}`}
+                                                                >
+                                                                    <span>+ Server</span>
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span
+                                                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                                                                isOccupied
+                                                                    ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                                                                    : isBilling
+                                                                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                                                    : isPaid
+                                                                    ? "bg-cyan-400/20 text-cyan-300 border border-cyan-400/30"
+                                                                    : resForTable || table.isReserved
+                                                                    ? "bg-purple-500/20 text-purple-300 border border-purple-500/40"
+                                                                    : "bg-emerald-400/20 text-emerald-300 border border-emerald-400/30"
+                                                            }`}
+                                                        >
+                                                            {isOccupied ? "Running" : isBilling ? "Billing" : isPaid ? "Paid" : resForTable || table.isReserved ? "Reserved" : "Available"}
+                                                        </span>
+
+                                                        <div className="relative" data-table-actions-menu>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(event) => toggleActionsMenu(table.id, event)}
+                                                                className="rounded-lg border border-[color:var(--app-border)]/40 px-2 py-0.5 text-lg leading-none theme-muted hover:text-[color:var(--app-text)] hover:bg-black/5 dark:hover:bg-white/5"
+                                                            >
+                                                                &#8942;
+                                                            </button>
+                                                            {openMenuId === table.id && (() => {
+                                                                const placement = menuPlacement[table.id] || { x: "left", y: "bottom" };
+                                                                const posXClass = placement.x === "left" ? "left-0" : "right-0";
+                                                                const posYClass = placement.y === "top" ? "bottom-full mb-2" : "top-full mt-2";
+                                                                return (
+                                                                <div
+                                                                    style={{ maxWidth: "calc(100vw - 32px)" }}
+                                                                    className={`absolute ${posXClass} ${posYClass} z-50 w-52 max-h-[300px] overflow-y-auto rounded-xl border border-[color:var(--app-border)]/40 bg-[color:var(--app-bg)] p-1.5 shadow-2xl text-[color:var(--app-text)]`}
+                                                                >
+                                                                    {(isOccupied || session) && (
+                                                                        <>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    handleFreeTable(table);
+                                                                                    setOpenMenuId(null);
+                                                                                }}
+                                                                                className={actionMenuItemClass}
+                                                                            >
+                                                                                Free Table
+                                                                            </button>
+                                                                            <div className="my-1 border-t border-white/10" />
+                                                                        </>
+                                                                    )}
+                                                                    {session && (
+                                                                        <>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => { setMoveModalTable(table); setTargetMoveTableId(""); setOpenMenuId(null); }}
+                                                                                className={actionMenuItemClass}
+                                                                            >
+                                                                                Move Table Session
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => { setMergeModalTable(table); setTargetMergeTableId(""); setOpenMenuId(null); }}
+                                                                                className={actionMenuItemClass}
+                                                                            >
+                                                                                Merge into Table
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => { setTransferModalTable(table); setTargetTransferTableId(""); setTransferItemQtyMap({}); setOpenMenuId(null); }}
+                                                                                className={actionMenuItemClass}
+                                                                            >
+                                                                                Transfer Items / Split
+                                                                            </button>
+                                                                            <div className="my-1 border-t border-white/10" />
+                                                                        </>
+                                                                    )}
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setAssignServerModalTable(table);
+                                                                            setSelectedWaiterIdToAssign(String(table.assignedWaiterId || session?.waiterId || ""));
+                                                                            setOpenMenuId(null);
+                                                                        }}
+                                                                        className={actionMenuItemClass}
+                                                                    >
+                                                                        {table.assignedWaiterId || session?.waiterId ? "Change / Remove Server" : "Assign Server"}
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => { startEdit(table); setOpenMenuId(null); }}
+                                                                        className={actionMenuItemClass}
+                                                                    >
+                                                                        Edit Table Config
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => { copyQrLink(table); setOpenMenuId(null); }}
+                                                                        className={actionMenuItemClass}
+                                                                    >
+                                                                        Copy QR Link
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setQrStudioTable(table);
+                                                                            setShowQrStudioModal(true);
+                                                                            setOpenMenuId(null);
+                                                                        }}
+                                                                        className={actionMenuItemClass}
+                                                                    >
+                                                                        QR Code Studio Card
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => { printQr(table); setOpenMenuId(null); }}
+                                                                        className={actionMenuItemClass}
+                                                                    >
+                                                                        Print QR Sheet
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => { handleDelete(table.id); setOpenMenuId(null); }}
+                                                                        className={actionMenuItemClass}
+                                                                    >
+                                                                        Delete Table
+                                                                    </button>
+                                                                </div>
+                                                                );
+                                                            })()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Live Session Body Info */}
+                                                {session ? (
+                                                    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-2.5 text-xs space-y-1">
+                                                        <div className="flex items-center justify-between text-gray-300">
+                                                            <span>Occupied Time:</span>
+                                                            <strong className="text-amber-300 tabular-nums">{formatAge(session.openedAt)}</strong>
+                                                        </div>
+                                                        <div className="flex items-center justify-between text-gray-300">
+                                                            <span>Running Total:</span>
+                                                            <strong className="text-lg font-extrabold text-emerald-400 tabular-nums">{formatMoney(session.total)}</strong>
+                                                        </div>
+                                                        <div className="flex items-center justify-between text-gray-400 text-[11px]">
+                                                            <span>Guests: {session.guestCount || 1}</span>
+                                                            {session.waiterName && <span>Server: {session.waiterName}</span>}
+                                                        </div>
+                                                    </div>
+                                                ) : resForTable ? (
+                                                    <div className="mt-3 rounded-xl border border-blue-500/40 bg-blue-950/30 p-2.5 text-xs space-y-1.5">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="font-bold text-blue-300">📅 Reservation</span>
+                                                            <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-bold text-blue-200">{resForTable.reservationTime}</span>
+                                                        </div>
+                                                        <p className="font-semibold text-white">{resForTable.guestName} ({resForTable.phone})</p>
+                                                        <p className="text-[11px] text-gray-300">Guests: {resForTable.guestCount} • Status: <span className="font-bold text-blue-400">{resForTable.status}</span></p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="mt-3 rounded-xl border border-dashed border-white/10 p-3 text-center text-xs text-gray-400">
+                                                        Table is currently available for seating.
+                                                    </div>
+                                                )}
+
+                                                {/* Table Operations Quick Actions */}
+                                                {session && (
+                                                    <div className="mt-2 flex gap-1.5 text-[11px]">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { setMoveModalTable(table); setTargetMoveTableId(""); }}
+                                                            className="flex-1 rounded-lg border border-white/10 bg-white/5 py-1 font-medium text-gray-300 transition hover:bg-white/10 hover:text-white"
+                                                            title="Move session to an available table"
+                                                        >
+                                                            Move
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { setMergeModalTable(table); setTargetMergeTableId(""); }}
+                                                            className="flex-1 rounded-lg border border-white/10 bg-white/5 py-1 font-medium text-gray-300 transition hover:bg-white/10 hover:text-white"
+                                                            title="Merge with another table session"
+                                                        >
+                                                            Merge
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { setTransferModalTable(table); setTargetTransferTableId(""); setTransferItemQtyMap({}); }}
+                                                            className="flex-1 rounded-lg border border-white/10 bg-white/5 py-1 font-medium text-gray-300 transition hover:bg-white/10 hover:text-white"
+                                                            title="Transfer items / Split table"
+                                                        >
+                                                            Split/Transfer
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* Action Buttons */}
+                                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                                    {isAvailable && (
+                                                        resForTable ? (
+                                                            <button
+                                                                type="button"
+                                                                disabled={seatingReservationId === resForTable.id}
+                                                                onClick={() => handleSeatReservation(resForTable.id)}
+                                                                className="w-full rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-500 disabled:opacity-50"
+                                                            >
+                                                                {seatingReservationId === resForTable.id ? "Seating Guest..." : "🪑 Seat Reserved Guest"}
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setOpenSessionTable(table)}
+                                                                className="w-full rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-500"
+                                                            >
+                                                                + Open Table Session
+                                                            </button>
+                                                        )
+                                                    )}
+
+                                                    {isOccupied && (
+                                                        <>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => navigate(`/owner/new-order?table=${encodeURIComponent(table.tableNo)}`)}
+                                                                className="flex-1 rounded-xl bg-orange-500 px-3 py-2 text-xs font-bold text-black hover:bg-orange-400"
+                                                            >
+                                                                + Add Items
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSplitBillingSession(session)}
+                                                                className="rounded-xl border border-purple-500/40 bg-purple-500/20 px-3 py-2 text-xs font-bold text-purple-300 hover:bg-purple-500/30"
+                                                            >
+                                                                Split / Pay
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleGenerateBill(session)}
+                                                                className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-300 hover:bg-amber-500/20"
+                                                            >
+                                                                Generate Bill
+                                                            </button>
+                                                        </>
+                                                    )}
+
+                                                    {(isBilling || isPaid) && (
+                                                        <>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSplitBillingSession(session)}
+                                                                className="flex-1 rounded-xl bg-purple-600 px-3 py-2 text-xs font-bold text-white hover:bg-purple-500"
+                                                            >
+                                                                Split Bill / Checkout
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleCloseSession(session)}
+                                                                className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-300 hover:bg-red-500/20"
+                                                            >
+                                                                Close Session
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+
+                                                <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500">
+                                                    <a href={target} target="_blank" rel="noreferrer" className="hover:text-orange-400 underline">
+                                                        QR Link
+                                                    </a>
+                                                    <a href={debugTarget} target="_blank" rel="noreferrer" className="hover:text-orange-400 underline">
+                                                        Debug Link
+                                                    </a>
+                                                </div>
+                                            </article>
+                                        );
+                                    })}
+                                </div>
+                            </section>
                         );
                     })}
-            </div>
-
-            {loading && (
-                <div className="mt-6 rounded-2xl border border-white/10 bg-[#111827] p-5 text-gray-300">
-                    Loading tables...
                 </div>
             )}
 
-            {!loading && filteredTables.length === 0 && (
-                <div className="mt-6 rounded-2xl border border-white/10 bg-[#111827] p-5 text-gray-300">
-                    {tables.length === 0
-                        ? "No tables yet. Add your first table above."
-                        : "No tables match your search/group filter."}
+            {/* OPEN SESSION MODAL */}
+            {openSessionTable && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                    <form onSubmit={handleOpenSessionSubmit} className="w-full max-w-md rounded-2xl border border-[color:var(--app-border)]/40 bg-[color:var(--app-bg)] text-[color:var(--app-text)] p-6 shadow-2xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-[color:var(--app-border)]/40 pb-3">
+                            <h4 className="text-xl font-bold">Open Table {openSessionTable.tableNo}</h4>
+                            <button type="button" onClick={() => setOpenSessionTable(null)} className="theme-muted hover:text-[color:var(--app-text)]">✕</button>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold theme-muted mb-1">Number of Guests</label>
+                            <input
+                                type="number"
+                                min="1"
+                                max={openSessionTable.seats || 20}
+                                value={sessionGuestCount}
+                                onChange={(e) => setSessionGuestCount(e.target.value)}
+                                className="w-full rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-4 py-2.5 text-sm text-[color:var(--app-text)] outline-none focus:border-orange-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold theme-muted mb-1">Server / Waiter Name (Optional)</label>
+                            <input
+                                type="text"
+                                placeholder="e.g. Ramesh"
+                                value={sessionWaiterName}
+                                onChange={(e) => setSessionWaiterName(e.target.value)}
+                                className="w-full rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-4 py-2.5 text-sm text-[color:var(--app-text)] outline-none focus:border-orange-500"
+                            />
+                        </div>
+                        <div className="flex gap-2 justify-end pt-2">
+                            <button type="button" onClick={() => setOpenSessionTable(null)} className="rounded-xl border border-[color:var(--app-border)]/40 px-4 py-2.5 text-sm theme-muted hover:bg-black/5 dark:hover:bg-white/5">
+                                Cancel
+                            </button>
+                            <button type="submit" className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-500">
+                                Start Session & Take Order
+                            </button>
+                        </div>
+                    </form>
                 </div>
             )}
+
+            {/* MOVE TABLE MODAL */}
+            {moveModalTable && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                    <form onSubmit={handleConfirmMoveTable} className="w-full max-w-md rounded-2xl border border-[color:var(--app-border)]/40 bg-[color:var(--app-bg)] text-[color:var(--app-text)] p-6 shadow-2xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-[color:var(--app-border)]/40 pb-3">
+                            <h4 className="text-xl font-bold">Move Table {moveModalTable.tableNo}</h4>
+                            <button type="button" onClick={() => setMoveModalTable(null)} className="theme-muted hover:text-[color:var(--app-text)]">✕</button>
+                        </div>
+                        <p className="text-xs theme-muted">
+                            Relocate active session from Table <strong className="text-orange-500">{moveModalTable.tableNo}</strong> to an empty table.
+                        </p>
+                        <div>
+                            <label className="block text-xs font-semibold theme-muted mb-1">Select Target Table</label>
+                            <select
+                                value={targetMoveTableId}
+                                onChange={(e) => setTargetMoveTableId(e.target.value)}
+                                required
+                                className="w-full rounded-xl border border-[color:var(--app-border)]/40 bg-transparent px-4 py-2.5 text-sm text-[color:var(--app-text)] outline-none focus:border-orange-500"
+                            >
+                                <option value="">-- Select Empty Table --</option>
+                                {tables
+                                    .filter((t) => t.id !== moveModalTable.id && t.isActive && !activeSessions[String(t.id)])
+                                    .map((t) => (
+                                        <option key={t.id} value={t.id}>
+                                            Table {t.tableNo} ({t.seats} Seats) - Available
+                                        </option>
+                                    ))}
+                            </select>
+                        </div>
+                        <div className="flex gap-2 justify-end pt-2">
+                            <button type="button" onClick={() => setMoveModalTable(null)} className="rounded-xl border border-[color:var(--app-border)]/40 px-4 py-2.5 text-sm theme-muted hover:bg-black/5 dark:hover:bg-white/5">
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={submittingMove || !targetMoveTableId}
+                                className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50"
+                            >
+                                {submittingMove ? "Moving..." : "Confirm Move"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {/* MERGE TABLES MODAL */}
+            {mergeModalTable && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+                    <form onSubmit={handleConfirmMergeTables} className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0f172a] p-6 shadow-2xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                            <h4 className="text-xl font-bold">Merge Table {mergeModalTable.tableNo}</h4>
+                            <button type="button" onClick={() => setMergeModalTable(null)} className="text-gray-400 hover:text-white">✕</button>
+                        </div>
+                        <p className="text-xs text-gray-300">
+                            Merge Table <strong className="text-amber-400">{mergeModalTable.tableNo}</strong> into another occupied table. All active items will be combined, and Table {mergeModalTable.tableNo} will be cleared.
+                        </p>
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-300 mb-1">Select Primary Table (To Merge Into)</label>
+                            <select
+                                value={targetMergeTableId}
+                                onChange={(e) => setTargetMergeTableId(e.target.value)}
+                                required
+                                className="w-full rounded-xl border border-white/10 bg-[#111827] px-4 py-2.5 text-sm text-white outline-none focus:border-orange-400"
+                            >
+                                <option value="">-- Select Occupied Table --</option>
+                                {tables
+                                    .filter((t) => t.id !== mergeModalTable.id && t.isActive && activeSessions[String(t.id)])
+                                    .map((t) => {
+                                        const sess = activeSessions[String(t.id)];
+                                        return (
+                                            <option key={t.id} value={t.id}>
+                                                Table {t.tableNo} ({formatMoney(sess?.total)})
+                                            </option>
+                                        );
+                                    })}
+                            </select>
+                        </div>
+                        <div className="flex gap-2 justify-end pt-2">
+                            <button type="button" onClick={() => setMergeModalTable(null)} className="rounded-xl border border-white/20 px-4 py-2.5 text-sm">
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={submittingMerge || !targetMergeTableId}
+                                className="rounded-xl bg-purple-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-purple-500 disabled:opacity-50"
+                            >
+                                {submittingMerge ? "Merging..." : "Confirm Merge"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {/* TRANSFER ITEMS / SPLIT MODAL */}
+            {transferModalTable && (() => {
+                const session = activeSessions[String(transferModalTable.id)];
+                const allItems = session?.orders?.flatMap((o) => o.items || []) || [];
+
+                return (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+                        <form onSubmit={handleConfirmTransferItems} className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#0f172a] p-6 shadow-2xl">
+                            <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-4">
+                                <div>
+                                    <h4 className="text-xl font-bold">Transfer Items / Split Table</h4>
+                                    <p className="text-xs text-gray-400">Source: Table {transferModalTable.tableNo}</p>
+                                </div>
+                                <button type="button" onClick={() => setTransferModalTable(null)} className="text-gray-400 hover:text-white">✕</button>
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-xs font-semibold text-gray-300 mb-1">Select Target Table</label>
+                                <select
+                                    value={targetTransferTableId}
+                                    onChange={(e) => setTargetTransferTableId(e.target.value)}
+                                    required
+                                    className="w-full rounded-xl border border-white/10 bg-[#111827] px-4 py-2.5 text-sm text-white outline-none focus:border-orange-400"
+                                >
+                                    <option value="">-- Select Target Table --</option>
+                                    {tables
+                                        .filter((t) => t.id !== transferModalTable.id && t.isActive)
+                                        .map((t) => {
+                                            const isOcc = !!activeSessions[String(t.id)];
+                                            return (
+                                                <option key={t.id} value={t.id}>
+                                                    Table {t.tableNo} ({isOcc ? "Occupied" : "Available"})
+                                                </option>
+                                            );
+                                        })}
+                                </select>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto space-y-2 pr-1 mb-4">
+                                <label className="block text-xs font-semibold text-gray-300">Select Item Quantities to Transfer</label>
+                                {allItems.length === 0 ? (
+                                    <p className="text-xs text-gray-400 py-4 text-center">No active order items found on Table {transferModalTable.tableNo}.</p>
+                                ) : (
+                                    allItems.map((item) => {
+                                        const currentTransferQty = transferItemQtyMap[item.id] || 0;
+                                        return (
+                                            <div key={item.id} className="flex items-center justify-between rounded-xl border border-white/10 bg-[#111827] p-3">
+                                                <div className="flex-1 min-w-0 pr-2">
+                                                    <p className="text-sm font-semibold truncate">{item.itemName}</p>
+                                                    {item.variantName && <p className="text-[11px] text-gray-400">{item.variantName}</p>}
+                                                    <p className="text-xs text-emerald-400">{formatMoney(item.price)} × {item.qty}</p>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setTransferItemQtyMap(prev => ({
+                                                            ...prev,
+                                                            [item.id]: Math.max(0, (prev[item.id] || 0) - 1)
+                                                        }))}
+                                                        className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 text-sm font-bold text-gray-200 hover:bg-white/10"
+                                                    >
+                                                        -
+                                                    </button>
+                                                    <span className="w-6 text-center text-sm font-extrabold">{currentTransferQty}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setTransferItemQtyMap(prev => ({
+                                                            ...prev,
+                                                            [item.id]: Math.min(item.qty, (prev[item.id] || 0) + 1)
+                                                        }))}
+                                                        className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 text-sm font-bold text-gray-200 hover:bg-white/10"
+                                                    >
+                                                        +
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+
+                            <div className="flex gap-2 justify-end pt-2 border-t border-white/10">
+                                <button type="button" onClick={() => setTransferModalTable(null)} className="rounded-xl border border-white/20 px-4 py-2.5 text-sm">
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={submittingTransfer || !targetTransferTableId}
+                                    className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-bold text-black hover:bg-orange-400 disabled:opacity-50"
+                                >
+                                    {submittingTransfer ? "Transferring..." : "Confirm Item Transfer"}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                );
+            })()}
+
+            {/* ASSIGN SERVER MODAL */}
+            {assignServerModalTable && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                    <form onSubmit={handleAssignWaiter} className="w-full max-w-md rounded-2xl border border-[color:var(--app-border)]/40 bg-[color:var(--app-bg)] text-[color:var(--app-text)] p-6 shadow-2xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-[color:var(--app-border)]/40 pb-3">
+                            <h4 className="text-xl font-bold flex items-center gap-2">
+                                <span>👤</span>
+                                <span>Assign Server to Table {assignServerModalTable.tableNo}</span>
+                            </h4>
+                            <button
+                                type="button"
+                                onClick={() => setAssignServerModalTable(null)}
+                                className="theme-muted hover:text-[color:var(--app-text)]"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <p className="text-xs theme-muted">
+                            Select an active waiter or staff member to assign to Table <strong className="text-orange-500">{assignServerModalTable.tableNo}</strong>.
+                        </p>
+
+                        <div>
+                            <label className="block text-xs font-semibold theme-muted mb-1">Select Server / Waiter</label>
+                            <select
+                                value={selectedWaiterIdToAssign}
+                                onChange={(e) => setSelectedWaiterIdToAssign(e.target.value)}
+                                className="w-full rounded-xl border border-[color:var(--app-border)]/40 bg-[color:var(--app-bg)] px-4 py-2.5 text-sm text-[color:var(--app-text)] outline-none focus:border-orange-500"
+                            >
+                                <option value="">-- Choose a Server --</option>
+                                {staffList.map((staff) => (
+                                    <option key={staff.id} value={staff.id}>
+                                        {staff.name || staff.userName || `Staff #${staff.id}`} ({staff.role || "Staff"}{staff.designation ? ` - ${staff.designation}` : ""})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {(assignServerModalTable.assignedWaiterId || assignServerModalTable.assignedWaiterName) && (
+                            <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-3 text-xs flex items-center justify-between">
+                                <div>
+                                    <span className="text-gray-400">Currently Assigned: </span>
+                                    <strong className="text-orange-400 font-bold">{assignServerModalTable.assignedWaiterName || `Staff #${assignServerModalTable.assignedWaiterId}`}</strong>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => handleUnassignWaiter(assignServerModalTable)}
+                                    className="rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-bold text-red-400 hover:bg-red-500/20"
+                                >
+                                    Unassign
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 justify-end pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setAssignServerModalTable(null)}
+                                className="rounded-xl border border-[color:var(--app-border)]/40 px-4 py-2.5 text-sm theme-muted hover:bg-black/5 dark:hover:bg-white/5"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={!selectedWaiterIdToAssign || submittingAssignServer}
+                                className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-bold text-black hover:bg-orange-400 disabled:opacity-50"
+                            >
+                                {submittingAssignServer ? "Saving..." : "Save Assignment"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {/* SPLIT BILLING & MULTI-PAYMENT MODAL */}
+            {splitBillingSession && (
+                <SplitBillingModal
+                    isOpen={!!splitBillingSession}
+                    onClose={() => setSplitBillingSession(null)}
+                    session={splitBillingSession}
+                    restaurantId={restaurantId}
+                    onSessionUpdated={(updatedSession) => {
+                        if (updatedSession) {
+                            setActiveSessions((prev) => {
+                                const next = { ...prev };
+                                if (updatedSession.status === "CLOSED" || updatedSession.status === "PAID") {
+                                    delete next[String(updatedSession.tableId)];
+                                } else {
+                                    next[String(updatedSession.tableId)] = updatedSession;
+                                }
+                                return next;
+                            });
+                        }
+                    }}
+                />
+            )}
+
+            {/* QR CODE STUDIO MODAL */}
+            <TableQrCodeModal
+                isOpen={showQrStudioModal}
+                onClose={() => setShowQrStudioModal(false)}
+                table={qrStudioTable}
+                tables={tables}
+                restaurantName={user?.restaurant?.name || "Tiffzy Restaurant"}
+                restaurantSlug={user?.restaurant?.slug || "tiffzy"}
+                restaurantId={restaurantId}
+                onQrRegenerated={(updatedTable) => {
+                    setTables((prev) =>
+                        prev.map((t) => (t.id === updatedTable.id ? { ...t, ...updatedTable } : t))
+                    );
+                }}
+            />
         </section>
     );
 }
