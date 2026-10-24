@@ -1249,8 +1249,18 @@ export const getChefHistory = async ({
   limit = 20,
 } = {}) => {
   const rid = Number(restaurantId);
-  const hasSpecificChef = chefId && String(chefId).toLowerCase() !== "all";
-  const cId = hasSpecificChef ? Number(chefId) : null;
+  let cId = null;
+  if (chefId && String(chefId).toLowerCase() !== "all") {
+    if (String(chefId).toLowerCase() === "me") {
+      cId = Number(requestingActor?.userId || requestingActor?.id || 0);
+    } else {
+      const parsed = Number(chefId);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new KitchenAssignmentError("Invalid chefId provided", 400, "INVALID_CHEF_ID");
+      }
+      cId = parsed;
+    }
+  }
 
   if (!rid) {
     throw new KitchenAssignmentError("restaurantId is required", 400, "MISSING_PARAMS");
@@ -1293,13 +1303,22 @@ export const getChefHistory = async ({
       );
     }
 
-    // Verify chef belongs to this restaurant
+    // Verify chef exists and belongs to this restaurant
     const chefUser = await prisma.user.findFirst({
-      where: { id: cId, restaurantId: rid },
-      select: { id: true, name: true },
+      where: {
+        id: cId,
+        OR: [
+          { restaurantId: rid },
+          { restaurantId: null },
+        ],
+      },
+      select: { id: true, name: true, restaurantId: true },
     });
     if (!chefUser) {
       throw new KitchenAssignmentError("Chef not found in this restaurant", 404, "CHEF_NOT_FOUND");
+    }
+    if (chefUser.restaurantId && Number(chefUser.restaurantId) !== rid && actorRole !== "SUPER_ADMIN") {
+      throw new KitchenAssignmentError("Access denied. Restaurant boundary violation.", 403, "FORBIDDEN_RESTAURANT_ACCESS");
     }
   }
 
@@ -1324,8 +1343,15 @@ export const getChefHistory = async ({
     status: statusCondition,
   };
 
+  const andClauses = [];
+
   if (cId) {
-    where.assignedChefId = cId;
+    andClauses.push({
+      OR: [
+        { assignedChefId: cId },
+        { preparedByUserId: cId },
+      ],
+    });
   }
 
   // Date filtering
@@ -1406,15 +1432,21 @@ export const getChefHistory = async ({
   if (search && String(search).trim()) {
     const q = String(search).trim();
     const isNum = !Number.isNaN(Number(q));
-    where.OR = [
-      { itemName: { contains: q, mode: "insensitive" } },
-      { assignedChefName: { contains: q, mode: "insensitive" } },
-      { preparedByName: { contains: q, mode: "insensitive" } },
-      { kot: { kotNo: { contains: q, mode: "insensitive" } } },
-      { kot: { tableNo: { contains: q, mode: "insensitive" } } },
-      { kot: { order: { orderNo: { contains: q, mode: "insensitive" } } } },
-      ...(isNum ? [{ kot: { orderId: Number(q) } }] : []),
-    ];
+    andClauses.push({
+      OR: [
+        { itemName: { contains: q, mode: "insensitive" } },
+        { assignedChefName: { contains: q, mode: "insensitive" } },
+        { preparedByName: { contains: q, mode: "insensitive" } },
+        { kot: { kotNo: { contains: q, mode: "insensitive" } } },
+        { kot: { tableNo: { contains: q, mode: "insensitive" } } },
+        { kot: { order: { orderNo: { contains: q, mode: "insensitive" } } } },
+        ...(isNum ? [{ kot: { orderId: Number(q) } }, { kotId: Number(q) }, { orderItemId: Number(q) }] : []),
+      ],
+    });
+  }
+
+  if (andClauses.length > 0) {
+    where.AND = andClauses;
   }
 
   // Authoritative operational summary metrics for the filtered dataset
@@ -1563,6 +1595,7 @@ export const getChefHistory = async ({
     return {
       id: it.id,
       orderItemId: it.orderItemId,
+      kotItemId: it.id,
       menuItemId: it.menuItemId,
       orderId: it.kot?.orderId || it.kot?.order?.id,
       orderNo: it.kot?.order?.orderNo,
@@ -1585,9 +1618,12 @@ export const getChefHistory = async ({
       assignmentSource: it.assignmentSource || "DISPATCHED",
       assignedChefId: it.assignedChefId,
       assignedChefName: it.assignedChefName,
+      chefId: it.assignedChefId || it.preparedByUserId || null,
+      chefName: it.assignedChefName || it.preparedByName || null,
       assignedAt: it.assignedAt,
       startedAt: it.startedAt,
       readyAt: it.readyAt,
+      completedAt: it.readyAt,
       prepTimeMinutes,
       completedTime,
       dateKey,
@@ -1612,6 +1648,8 @@ export const getChefHistory = async ({
 
   return {
     ok: true,
+    success: true,
+    total: totalCount,
     items: formattedItems,
     groupedByDate,
     summary,
@@ -1625,3 +1663,384 @@ export const getChefHistory = async ({
     timezone: tz,
   };
 };
+
+/**
+ * 13. Fetch completed food-service history for Server Station (Server / Steward / Manager / Owner)
+ */
+export const getServerHistory = async ({
+  prisma = defaultPrisma,
+  restaurantId,
+  serverId = null,
+  requestingActor = null,
+  date = null,
+  from = null,
+  to = null,
+  range = "all",
+  search = null,
+  status = null,
+  page = 1,
+  limit = 20,
+} = {}) => {
+  const rid = Number(restaurantId);
+  const hasSpecificServer = serverId && String(serverId).toLowerCase() !== "all";
+  const sId = hasSpecificServer ? Number(serverId) : null;
+
+  if (!rid) {
+    throw new KitchenAssignmentError("restaurantId is required", 400, "MISSING_PARAMS");
+  }
+
+  const actorRole = String(requestingActor?.role || "").toUpperCase();
+  const actorDesignation = String(requestingActor?.designation || "").toLowerCase();
+  const isPrivileged =
+    actorRole === "OWNER" ||
+    actorRole === "MANAGER" ||
+    actorRole === "SUPER_ADMIN" ||
+    actorDesignation.includes("senior chef") ||
+    actorDesignation.includes("head chef") ||
+    actorDesignation.includes("executive chef");
+
+  const actorId = Number(requestingActor?.userId || requestingActor?.id);
+
+  // Cross-restaurant check: actor must belong to the same restaurant (unless super admin)
+  if (actorRole !== "SUPER_ADMIN" && requestingActor?.restaurantId && Number(requestingActor.restaurantId) !== rid) {
+    throw new KitchenAssignmentError("Access denied. Restaurant boundary violation.", 403, "FORBIDDEN_RESTAURANT_ACCESS");
+  }
+
+  let effectiveServerId = sId;
+  if (!isPrivileged) {
+    if (sId && sId !== actorId) {
+      throw new KitchenAssignmentError(
+        "Access denied. You can only access your own server history.",
+        403,
+        "FORBIDDEN_HISTORY_ACCESS"
+      );
+    }
+    // Default to the requesting server's identity
+    effectiveServerId = actorId;
+  }
+
+  if (effectiveServerId) {
+    // Verify server exists in this restaurant
+    const serverUser = await prisma.user.findFirst({
+      where: { id: effectiveServerId, restaurantId: rid },
+      select: { id: true, name: true },
+    });
+    if (!serverUser) {
+      throw new KitchenAssignmentError("Server not found in this restaurant", 404, "SERVER_NOT_FOUND");
+    }
+  }
+
+  // Fetch restaurant timezone
+  const restaurant = await prisma.restaurant.findUnique({
+    where: { id: rid },
+    select: { id: true, name: true, timezone: true },
+  });
+  const tz = restaurant?.timezone || "Asia/Kolkata";
+
+  // Authoritative server completed state: only SERVED or DELIVERED items appear in history.
+  // PENDING, PREPARING, READY are active queue only.
+  const statusCondition = status && status !== "ALL"
+    ? String(status).toUpperCase()
+    : { in: ["SERVED", "DELIVERED"] };
+
+  const where = {
+    kot: {
+      restaurantId: rid,
+    },
+    status: statusCondition,
+  };
+
+  const andClauses = [];
+
+  // Scoping to server if specific server is selected / authenticated
+  if (effectiveServerId) {
+    andClauses.push({
+      OR: [
+        { kot: { waiterId: effectiveServerId } },
+        { kot: { order: { createdByUserId: effectiveServerId } } },
+        { kot: { tableSession: { waiterId: effectiveServerId } } },
+        { kot: { order: { tableSession: { waiterId: effectiveServerId } } } },
+      ],
+    });
+  }
+
+  // Date filtering
+  let dateBounds = null;
+  const normalizedRange = String(range || "all").toLowerCase().trim();
+
+  if (date) {
+    const startStr = `${date}T00:00:00.000`;
+    const endStr = `${date}T23:59:59.999`;
+    const offset = getTimezoneOffsetMs(tz, startStr);
+    const start = new Date(new Date(startStr).getTime() - offset);
+    const end = new Date(new Date(endStr).getTime() - offset);
+    dateBounds = { start, end };
+  } else if (from || to) {
+    let start = null;
+    let end = null;
+    if (from) {
+      const startStr = `${from}T00:00:00.000`;
+      const offset = getTimezoneOffsetMs(tz, startStr);
+      start = new Date(new Date(startStr).getTime() - offset);
+    }
+    if (to) {
+      const endStr = `${to}T23:59:59.999`;
+      const offset = getTimezoneOffsetMs(tz, endStr);
+      end = new Date(new Date(endStr).getTime() - offset);
+    }
+    dateBounds = { start, end };
+  } else if (normalizedRange === "today") {
+    const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date());
+    const startStr = `${todayStr}T00:00:00.000`;
+    const endStr = `${todayStr}T23:59:59.999`;
+    const offset = getTimezoneOffsetMs(tz, startStr);
+    dateBounds = {
+      start: new Date(new Date(startStr).getTime() - offset),
+      end: new Date(new Date(endStr).getTime() - offset),
+    };
+  } else if (normalizedRange === "yesterday") {
+    const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const yestStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(yesterdayDate);
+    const startStr = `${yestStr}T00:00:00.000`;
+    const endStr = `${yestStr}T23:59:59.999`;
+    const offset = getTimezoneOffsetMs(tz, startStr);
+    dateBounds = {
+      start: new Date(new Date(startStr).getTime() - offset),
+      end: new Date(new Date(endStr).getTime() - offset),
+    };
+  } else if (normalizedRange === "7d") {
+    const pastDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const pastStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(pastDate);
+    const startStr = `${pastStr}T00:00:00.000`;
+    const offset = getTimezoneOffsetMs(tz, startStr);
+    dateBounds = {
+      start: new Date(new Date(startStr).getTime() - offset),
+      end: new Date(),
+    };
+  } else if (normalizedRange === "30d") {
+    const pastDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const pastStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(pastDate);
+    const startStr = `${pastStr}T00:00:00.000`;
+    const offset = getTimezoneOffsetMs(tz, startStr);
+    dateBounds = {
+      start: new Date(new Date(startStr).getTime() - offset),
+      end: new Date(),
+    };
+  }
+
+  if (dateBounds) {
+    const timeFilter = {};
+    if (dateBounds.start) timeFilter.gte = dateBounds.start;
+    if (dateBounds.end) timeFilter.lte = dateBounds.end;
+    if (timeFilter.gte || timeFilter.lte) {
+      andClauses.push({
+        OR: [
+          { kot: { updatedAt: timeFilter } },
+          { readyAt: timeFilter },
+          { createdAt: timeFilter },
+        ],
+      });
+    }
+  }
+
+  // Search filtering
+  if (search && String(search).trim()) {
+    const q = String(search).trim();
+    const isNum = !Number.isNaN(Number(q));
+    andClauses.push({
+      OR: [
+        { itemName: { contains: q, mode: "insensitive" } },
+        { kot: { kotNo: { contains: q, mode: "insensitive" } } },
+        { kot: { tableNo: { contains: q, mode: "insensitive" } } },
+        { kot: { waiterName: { contains: q, mode: "insensitive" } } },
+        { kot: { order: { orderNo: { contains: q, mode: "insensitive" } } } },
+        { kot: { order: { customerName: { contains: q, mode: "insensitive" } } } },
+        { assignedChefName: { contains: q, mode: "insensitive" } },
+        { preparedByName: { contains: q, mode: "insensitive" } },
+        ...(isNum ? [{ kot: { orderId: Number(q) } }, { kotId: Number(q) }, { orderItemId: Number(q) }] : []),
+      ],
+    });
+  }
+
+  if (andClauses.length > 0) {
+    where.AND = andClauses;
+  }
+
+  // Summary Metrics calculation across all matching items
+  const allFilteredItems = await prisma.kitchenOrderTicketItem.findMany({
+    where,
+    select: {
+      id: true,
+      kotId: true,
+      orderItemId: true,
+      kot: {
+        select: {
+          id: true,
+          tableNo: true,
+          orderId: true,
+          tableSessionId: true,
+          waiterId: true,
+        },
+      },
+    },
+  });
+
+  const totalCount = allFilteredItems.length;
+  const completedKots = new Set(allFilteredItems.map((it) => it.kotId)).size;
+  const completedOrders = new Set(allFilteredItems.map((it) => it.kot?.orderId).filter(Boolean)).size;
+  const completedTables = new Set(allFilteredItems.map((it) => it.kot?.tableNo).filter(Boolean)).size;
+
+  const summary = {
+    totalServedItems: totalCount,
+    totalServedKots: completedKots,
+    totalServedOrders: completedOrders,
+    totalServedTables: completedTables,
+  };
+
+  // Pagination calculation
+  const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+  const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const skip = (parsedPage - 1) * parsedLimit;
+
+  const rawItems = await prisma.kitchenOrderTicketItem.findMany({
+    where,
+    include: {
+      kot: {
+        select: {
+          id: true,
+          kotNo: true,
+          tableNo: true,
+          status: true,
+          priority: true,
+          waiterId: true,
+          waiterName: true,
+          tableSessionId: true,
+          createdAt: true,
+          updatedAt: true,
+          restaurantId: true,
+          orderId: true,
+          order: {
+            select: {
+              id: true,
+              orderNo: true,
+              orderSource: true,
+              fulfillment: true,
+              customerName: true,
+              tableSessionId: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: [
+      { kot: { updatedAt: "desc" } },
+      { id: "desc" },
+    ],
+    skip,
+    take: parsedLimit,
+  });
+
+  const totalPages = Math.ceil(totalCount / parsedLimit) || 1;
+  const hasMore = parsedPage < totalPages;
+
+  const now = new Date();
+  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(now);
+  const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(yesterdayDate);
+
+  const formattedItems = rawItems.map((it) => {
+    const servedDate = it.kot?.updatedAt || it.readyAt || it.createdAt;
+    const sDate = new Date(servedDate);
+    const dateKey = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(sDate);
+
+    let dateHeading = "";
+    const fullDateText = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }).format(sDate);
+
+    if (dateKey === todayKey) {
+      dateHeading = `TODAY • ${fullDateText}`;
+    } else if (dateKey === yesterdayKey) {
+      dateHeading = `YESTERDAY • ${fullDateText}`;
+    } else {
+      dateHeading = fullDateText;
+    }
+
+    const servedTime = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(sDate);
+
+    return {
+      id: it.id,
+      orderItemId: it.orderItemId,
+      kotItemId: it.id,
+      menuItemId: it.menuItemId,
+      orderId: it.kot?.orderId || it.kot?.order?.id,
+      orderNo: it.kot?.order?.orderNo,
+      orderType: it.kot?.order?.fulfillment || it.kot?.order?.orderSource || "DINE_IN",
+      orderSource: it.kot?.order?.orderSource || "DINE_IN",
+      kotId: it.kotId,
+      kotNumber: it.kot?.kotNo || String(it.kotId),
+      kotNo: it.kot?.kotNo || String(it.kotId),
+      tableNo: it.kot?.tableNo || "N/A",
+      tableSessionId: it.kot?.tableSessionId || it.kot?.order?.tableSessionId || null,
+      name: it.itemName,
+      itemName: it.itemName,
+      quantity: it.qty,
+      qty: it.qty,
+      variantName: it.variantName,
+      selectedModifiers: it.selectedModifiers,
+      notes: it.notes,
+      status: "SERVED",
+      priority: it.kot?.priority || "NORMAL",
+      chefName: it.assignedChefName || it.preparedByName || null,
+      waiterName: it.kot?.waiterName || it.kot?.order?.customerName || null,
+      serverName: it.kot?.waiterName || it.kot?.order?.customerName || null,
+      completedTime: servedTime,
+      servedTime,
+      dateKey,
+      dateHeading,
+      servedAt: sDate.toISOString(),
+      readyAt: it.readyAt ? new Date(it.readyAt).toISOString() : null,
+      startedAt: it.startedAt ? new Date(it.startedAt).toISOString() : null,
+      createdAt: new Date(it.createdAt).toISOString(),
+    };
+  });
+
+  const groupMap = new Map();
+  for (const it of formattedItems) {
+    if (!groupMap.has(it.dateKey)) {
+      groupMap.set(it.dateKey, {
+        dateKey: it.dateKey,
+        dateHeading: it.dateHeading,
+        items: [],
+      });
+    }
+    groupMap.get(it.dateKey).items.push(it);
+  }
+
+  const groupedByDate = Array.from(groupMap.values());
+
+  return {
+    ok: true,
+    success: true,
+    items: formattedItems,
+    groupedByDate,
+    summary,
+    pagination: {
+      page: parsedPage,
+      limit: parsedLimit,
+      totalCount,
+      totalPages,
+      hasMore,
+    },
+    timezone: tz,
+  };
+};
+

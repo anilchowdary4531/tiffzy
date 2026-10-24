@@ -12,19 +12,23 @@ import {
   selfPickKot,
   getAvailableKitchenWork,
   getChefHistory,
+  getServerHistory,
 } from "../services/kitchenAssignmentService.js";
 
 const handleError = (res, err) => {
+  const sendStatus = (code) => (typeof res.status === "function" ? res.status(code) : (typeof res.code === "function" ? res.code(code) : res));
   if (err instanceof KitchenAssignmentError) {
-    return res.status(err.status).send({
+    return sendStatus(err.status).send({
       ok: false,
+      success: false,
       message: err.message,
       code: err.code,
     });
   }
   console.error("[kitchenAssignmentController] Error:", err);
-  return res.status(500).send({
+  return sendStatus(500).send({
     ok: false,
+    success: false,
     message: err?.message || "Internal server error",
   });
 };
@@ -266,3 +270,32 @@ export const getChefHistoryController = async (req, res) => {
     return handleError(res, err);
   }
 };
+
+export const getServerHistoryController = async (req, res) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId || req.user?.restaurantId || req.staffActor?.restaurantId || req.query?.restaurantId || 0);
+    const rawServerId = req.params.serverId ?? req.query?.serverId;
+    const serverId = rawServerId !== undefined && rawServerId !== null && String(rawServerId).trim() !== "" ? rawServerId : null;
+    const requestingActor = req.staffActor || req.user || null;
+    const { date, from, to, range, search, status, page, limit } = req.query || {};
+
+    const result = await getServerHistory({
+      prisma: req.prisma,
+      restaurantId,
+      serverId,
+      requestingActor,
+      date,
+      from,
+      to,
+      range,
+      search,
+      status,
+      page,
+      limit,
+    });
+    return res.send(result);
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+

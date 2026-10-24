@@ -72,6 +72,7 @@ import {
   selfPickKotController,
   getAvailableKitchenWorkController,
   getChefHistoryController,
+  getServerHistoryController,
 } from "../controllers/kitchenAssignmentController.js";
 import {
   moveTable,
@@ -4063,6 +4064,29 @@ export default async function ownerRoutes(app, deps = {}) {
     if (!actor) return reply;
     req.staffActor = actor;
     return getChefHistoryController(req, reply);
+  });
+
+  app.get("/owner/:restaurantId/server/history", getServerHistoryController);
+  app.get("/api/owner/:restaurantId/server/history", getServerHistoryController);
+  app.get("/owner/:restaurantId/server/:serverId/history", getServerHistoryController);
+  app.get("/api/owner/:restaurantId/server/:serverId/history", getServerHistoryController);
+  app.get("/api/v1/staff/server/history", async (req, reply) => {
+    const actor = await requireStaffJwt(req, reply, {
+      prisma: req.prisma || deps.prisma,
+      allowedRoles: deps.STAFF_ALLOWED_ROLES,
+    });
+    if (!actor) return reply;
+    req.staffActor = actor;
+    return getServerHistoryController(req, reply);
+  });
+  app.get("/api/v1/server/history", async (req, reply) => {
+    const actor = await requireStaffJwt(req, reply, {
+      prisma: req.prisma || deps.prisma,
+      allowedRoles: deps.STAFF_ALLOWED_ROLES,
+    });
+    if (!actor) return reply;
+    req.staffActor = actor;
+    return getServerHistoryController(req, reply);
   });
 
   app.post("/owner/:restaurantId/kitchen/items/:itemId/assign", assignItemController);
