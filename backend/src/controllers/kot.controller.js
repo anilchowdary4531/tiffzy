@@ -1,5 +1,5 @@
 import { testPrinterConnection } from "../services/escposService.js";
-import { dispatchKotPrint, reprintKot, updateKotStatus, updateKotItemStatus, updateKotPriority, createKotsForOrder } from "../services/kotService.js";
+import { dispatchKotPrint, reprintKot, updateKotStatus, updateKotItemStatus, updateKotPriority, createKotsForOrder, getCanonicalReadyItems } from "../services/kotService.js";
 import prisma from "../prisma.js";
 import { emitToKitchen } from "../realtime/socketServer.js";
 import { getKitchenWorkload } from "../services/kitchenAssignmentService.js";
@@ -335,6 +335,14 @@ export const updateItemStatus = async (req, res) => {
         event: "kitchen:item_ready",
         payload: { kotId, itemId, status, kot, item: updatedItem },
       });
+    } else if (String(status).toUpperCase() === "SERVED" || String(status).toUpperCase() === "DELIVERED") {
+      emitToKitchen({
+        io,
+        staff,
+        restaurantId,
+        event: "kitchen:item_served",
+        payload: { kotId, itemId, status: "SERVED", kot, item: updatedItem },
+      });
     }
 
     emitToKitchen({
@@ -373,6 +381,28 @@ export const updateItemStatus = async (req, res) => {
   } catch (err) {
     console.error("updateItemStatus error:", err);
     return res.status(500).send({ message: err?.message || "Failed to update item status" });
+  }
+};
+
+/**
+ * Authoritative Controller: GET /owner/:restaurantId/kitchen/ready-items
+ * Returns all eligible READY items for service distribution queue
+ */
+export const getReadyItemsController = async (req, res) => {
+  try {
+    const restaurantId = Number(req.params.restaurantId || req.user?.restaurantId || req.staffActor?.restaurantId || req.query?.restaurantId || 0);
+    if (!restaurantId) return res.status(400).send({ message: "Restaurant ID required" });
+
+    const db = req.prisma || prisma;
+    const items = await getCanonicalReadyItems({ prisma: db, restaurantId });
+    return res.send({
+      ok: true,
+      count: items.length,
+      items,
+    });
+  } catch (err) {
+    console.error("getReadyItemsController error:", err);
+    return res.status(500).send({ message: err?.message || "Failed to fetch ready items" });
   }
 };
 

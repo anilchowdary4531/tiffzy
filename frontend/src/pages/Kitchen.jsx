@@ -187,7 +187,7 @@ export default function Kitchen() {
     // Kitchen Config & Workload
     const [kitchenConfig, setKitchenConfig] = useState({ mode: "DISPATCHER", scope: "ITEMS" });
     const [workload, setWorkload] = useState({ chefs: [] });
-    const [isWorkloadExpanded, setIsWorkloadExpanded] = useState(false);
+    const [showChefWorkload, setShowChefWorkload] = useState(false);
     const [selectedChefFilter, setSelectedChefFilter] = useState("ALL"); // "ALL" | "UNASSIGNED" | chefId
     const [updatingConfig, setUpdatingConfig] = useState(false);
 
@@ -1693,8 +1693,9 @@ export default function Kitchen() {
                             onSelectChef={setSelectedChefFilter}
                             unassignedCount={unassignedItemsCount}
                             loading={loading}
-                            isExpanded={isWorkloadExpanded}
-                            onToggleExpand={() => setIsWorkloadExpanded((prev) => !prev)}
+                            showChefWorkload={showChefWorkload}
+                            isExpanded={showChefWorkload}
+                            onToggleExpand={() => setShowChefWorkload((prev) => !prev)}
                         />
                     </div>
 

@@ -1,7 +1,7 @@
 import { requireStaffJwt } from "../services/staffAuthService.js";
 import { logAuditEvent } from "../services/auditLogService.js";
 import { completeSessionAndReleaseTable } from "../services/tableSessionService.js";
-import { syncParentOrderStatusFromKots } from "../services/kotService.js";
+import { syncParentOrderStatusFromKots, getCanonicalReadyItems } from "../services/kotService.js";
 
 export default async function staffTaskRoutes(app, deps = {}) {
   const { prisma, realtime, STAFF_ALLOWED_ROLES } = deps || {};
@@ -398,39 +398,22 @@ export default async function staffTaskRoutes(app, deps = {}) {
       const restaurantId = getEffectiveRid(req);
       if (!restaurantId) return reply.code(400).send({ message: "restaurantId required" });
 
-      const readyItems = await prisma.kitchenOrderTicketItem.findMany({
-        where: {
-          kot: {
-            restaurantId,
-            status: { notIn: ["SERVED", "CANCELLED"] },
-          },
-          status: "READY",
-        },
-        include: {
-          kot: {
-            select: {
-              id: true,
-              kotNo: true,
-              orderId: true,
-              tableNo: true,
-              createdAt: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "asc" },
-      });
-
-      const formatted = readyItems.map((it) => ({
-        ...it,
-        qty: it.qty,
-        quantity: it.qty,
-        itemName: it.itemName,
-        name: it.itemName,
-      }));
-
-      return reply.send({ success: true, items: formatted });
+      const items = await getCanonicalReadyItems({ prisma, restaurantId });
+      return reply.send({ success: true, ok: true, count: items.length, items });
     } catch (err) {
       return reply.code(500).send({ message: err.message || "Failed to fetch food runner items" });
+    }
+  });
+
+  app.get("/api/v1/staff/ready-items", { preHandler: requireStaff }, async (req, reply) => {
+    try {
+      const restaurantId = getEffectiveRid(req);
+      if (!restaurantId) return reply.code(400).send({ message: "restaurantId required" });
+
+      const items = await getCanonicalReadyItems({ prisma, restaurantId });
+      return reply.send({ success: true, ok: true, count: items.length, items });
+    } catch (err) {
+      return reply.code(500).send({ message: err.message || "Failed to fetch ready items" });
     }
   });
 

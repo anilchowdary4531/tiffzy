@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChefHat, Flame, Clock, CheckCircle2, ChevronRight, ChevronDown, Users } from "lucide-react";
+import { ChefHat, Flame, Clock, CheckCircle2, ChevronRight, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function ChefWorkloadPanel({
@@ -9,11 +9,18 @@ export default function ChefWorkloadPanel({
   unassignedCount = 0,
   loading = false,
   isExpanded: controlledExpanded,
+  showChefWorkload: aliasControlledExpanded,
   onToggleExpand: controlledOnToggle,
   defaultExpanded = false,
 }) {
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const isExpanded = controlledExpanded !== undefined ? controlledExpanded : internalExpanded;
+  const isExpanded =
+    controlledExpanded !== undefined
+      ? controlledExpanded
+      : aliasControlledExpanded !== undefined
+      ? aliasControlledExpanded
+      : internalExpanded;
+
   const toggleExpanded = () => {
     if (controlledOnToggle) {
       controlledOnToggle();
@@ -24,49 +31,63 @@ export default function ChefWorkloadPanel({
 
   return (
     <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200/80 dark:border-slate-800/80 p-3 shadow-xs transition-all">
-      <div className={`flex items-center justify-between gap-2 ${isExpanded ? "mb-2.5" : ""}`}>
-        <button
-          type="button"
-          onClick={toggleExpanded}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              toggleExpanded();
-            }
-          }}
-          aria-expanded={isExpanded}
-          aria-label="Toggle Chef Stations & Workload section"
-          className="flex-1 flex items-center gap-2 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-1 rounded-lg py-0.5 transition select-none cursor-pointer min-w-0"
-        >
-          <span className="flex items-center justify-center w-5 h-5 rounded text-slate-500 dark:text-slate-400 group-hover:text-orange-600 dark:group-hover:text-orange-400 group-hover:bg-orange-50 dark:group-hover:bg-slate-800 transition shrink-0">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleExpanded();
+          }
+        }}
+        aria-expanded={isExpanded}
+        aria-label="Chef Stations & Workload"
+        className={`w-full flex items-center justify-between gap-2 cursor-pointer select-none rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-1 transition group py-0.5 ${
+          isExpanded ? "border-b border-slate-100 dark:border-slate-800/80 pb-2.5 mb-2.5" : ""
+        }`}
+      >
+        {/* Left: Icon, Title, and Count Badge */}
+        <div className="flex items-center gap-2 min-w-0">
+          <Users size={16} className="text-orange-500 shrink-0" />
+          <span className="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors truncate">
+            Chef Stations & Workload
+          </span>
+          <span className="text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded-full shrink-0">
+            {chefs.length}
+          </span>
+        </div>
+
+        {/* Right: View All button (when expanded) & Expand/Collapse Chevron */}
+        <div className="flex items-center gap-2 shrink-0">
+          {isExpanded && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectChef && onSelectChef("ALL");
+              }}
+              className={`text-[11px] font-semibold px-2 py-0.5 rounded-md transition ${
+                selectedChefId === "ALL"
+                  ? "bg-orange-500 text-white"
+                  : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+              }`}
+            >
+              View All
+            </button>
+          )}
+
+          <span
+            className="flex items-center justify-center w-6 h-6 rounded-md text-slate-500 dark:text-slate-400 group-hover:text-orange-600 dark:group-hover:text-orange-400 group-hover:bg-orange-50 dark:group-hover:bg-slate-800/60 transition"
+            aria-hidden="true"
+          >
             {isExpanded ? (
-              <ChevronDown size={15} className="shrink-0 transition-transform duration-200" />
+              <ChevronUp size={16} className="transition-transform duration-200" />
             ) : (
-              <ChevronRight size={15} className="shrink-0 transition-transform duration-200" />
+              <ChevronDown size={16} className="transition-transform duration-200" />
             )}
           </span>
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors min-w-0">
-            <Users size={14} className="text-orange-500 shrink-0" />
-            <span className="truncate">Chef Stations & Workload</span>
-            <span className="text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded-full shrink-0">
-              {chefs.length}
-            </span>
-          </div>
-        </button>
-
-        {isExpanded && (
-          <button
-            type="button"
-            onClick={() => onSelectChef && onSelectChef("ALL")}
-            className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-md transition ${
-              selectedChefId === "ALL"
-                ? "bg-orange-500 text-white"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-            }`}
-          >
-            View All
-          </button>
-        )}
+        </div>
       </div>
 
       {isExpanded && (

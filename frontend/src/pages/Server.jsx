@@ -440,6 +440,16 @@ export default function Server() {
         }
     );
 
+    // Canonical Authoritative Ready-to-Distribute Items
+    const { data: canonicalReadyData, refresh: refreshCanonicalReady } = useCachedGet(
+        restaurantId ? `/owner/${restaurantId}/kitchen/ready-items` : null,
+        {
+            enabled: Boolean(restaurantId),
+            ttlMs: 3_000,
+            scope: `server-ready-items:${restaurantId}`,
+        }
+    );
+
     const tables = useMemo(() => {
         const rawTables = canonicalTables.length > 0
             ? canonicalTables
@@ -521,12 +531,47 @@ export default function Server() {
         return Array.isArray(reservationsData.reservations) ? reservationsData.reservations : [];
     }, [reservationsData]);
 
-    // Unified List of Ready Items to Distribute (from KOTs and Orders)
+    // Unified Authoritative List of Ready Items to Distribute
     const readyItemsToDistribute = useMemo(() => {
+        // Priority 1: Canonical item-level ready queue from backend authority
+        if (canonicalReadyData && Array.isArray(canonicalReadyData.items)) {
+            return canonicalReadyData.items.map((it) => ({
+                key: `kot-item-${it.id}`,
+                id: it.id,
+                kotItemId: it.id,
+                orderItemId: it.orderItemId,
+                kotId: it.kotId,
+                kotNo: it.kotNo,
+                orderId: it.orderId,
+                orderNo: it.orderNo,
+                tableNo: String(it.tableNo || "N/A").trim(),
+                waiterName: it.waiterName || null,
+                stationName: it.stationName || "Kitchen",
+                readyAt: it.readyAt || it.createdAt,
+                type: "KOT_ITEM",
+                name: it.itemName || it.name,
+                itemName: it.itemName || it.name,
+                qty: it.qty || it.quantity || 1,
+                notes: it.notes,
+                status: it.status,
+                itemsList: [
+                    {
+                        id: it.id,
+                        orderItemId: it.orderItemId,
+                        name: it.itemName || it.name,
+                        itemName: it.itemName || it.name,
+                        qty: it.qty || it.quantity || 1,
+                        notes: it.notes,
+                        status: it.status,
+                    },
+                ],
+            }));
+        }
+
+        // Priority 2: Fallback to KOTs data for mock test compatibility
         const list = [];
         const seenOrderIds = new Set();
 
-        // 1. Collect from Ready KOTs or KOTs with ready items
         const rawKots = Array.isArray(readyKotsData?.kots) ? readyKotsData.kots : Array.isArray(readyKotsData) ? readyKotsData : [];
         rawKots.forEach((kot) => {
             const kotStatus = String(kot.status || "").toUpperCase();
@@ -561,7 +606,7 @@ export default function Server() {
             }
         });
 
-        // 2. Collect from Ready Orders (if not already captured as a ready KOT)
+        // Priority 3: Collect from Ready Orders (if not already captured as a ready KOT)
         const rawOrders = Array.isArray(liveOrdersData?.orders) ? liveOrdersData.orders : Array.isArray(liveOrdersData) ? liveOrdersData : [];
         rawOrders.forEach((order) => {
             if (String(order.status || "").toUpperCase() === "READY" && !seenOrderIds.has(Number(order.id))) {
@@ -588,7 +633,7 @@ export default function Server() {
         });
 
         return list;
-    }, [readyKotsData, liveOrdersData]);
+    }, [canonicalReadyData, readyKotsData, liveOrdersData]);
 
     // Map table number (and normalized key) to count of ready items waiting for pickup
     const readyItemsByTable = useMemo(() => {
@@ -628,6 +673,7 @@ export default function Server() {
         refreshReservations,
         refreshLiveOrders,
         refreshReadyKots,
+        refreshCanonicalReady,
         fetchUnreadCount,
         handleViewAssignedTable: null,
         user,
@@ -639,6 +685,7 @@ export default function Server() {
             refreshReservations,
             refreshLiveOrders,
             refreshReadyKots,
+            refreshCanonicalReady,
             fetchUnreadCount,
             handleViewAssignedTable,
             user,
@@ -667,6 +714,7 @@ export default function Server() {
             callbacksRef.current.refreshReservations?.({ force: true });
             callbacksRef.current.refreshLiveOrders?.({ force: true });
             callbacksRef.current.refreshReadyKots?.({ force: true });
+            callbacksRef.current.refreshCanonicalReady?.({ force: true });
 
             if (data?.tableId) {
                 setSelectedTable((prev) => {
@@ -698,14 +746,15 @@ export default function Server() {
                 });
             }
 
-            const status = String(data?.status || data?.kot?.status || "").toUpperCase();
-            if (status === "READY") {
+            const status = String(data?.status || data?.kot?.status || data?.item?.status || "").toUpperCase();
+            if (status === "READY" || data?.event === "kitchen:item_ready") {
                 playNotificationSound();
-                const tableNum = data?.tableNo || data?.kot?.tableNo || data?.order?.tableNo;
+                const tableNum = data?.tableNo || data?.kot?.tableNo || data?.order?.tableNo || data?.item?.tableNo || data?.item?.kot?.tableNo;
                 const orderNum = data?.orderNo || data?.kot?.kotNo || data?.order?.orderNo;
+                const itemName = data?.item?.itemName || data?.item?.name || "";
                 showToast({
                     title: "🔔 Food Ready to Distribute!",
-                    message: `${tableNum ? `Table ${tableNum}: ` : ""}${orderNum ? `Ticket #${orderNum}` : "Items"} ready at kitchen pass!`,
+                    message: `${tableNum ? `Table ${tableNum}: ` : ""}${itemName ? `${itemName} ` : ""}${orderNum ? `(Ticket #${orderNum})` : "Items"} ready at kitchen pass!`,
                     variant: "success",
                 });
             }
@@ -788,6 +837,7 @@ export default function Server() {
             callbacksRef.current.refreshTables?.({ force: true });
             callbacksRef.current.refreshLiveOrders?.({ force: true });
             callbacksRef.current.refreshReadyKots?.({ force: true });
+            callbacksRef.current.refreshCanonicalReady?.({ force: true });
         };
 
         socket.on("connect", handleConnect);
@@ -798,6 +848,11 @@ export default function Server() {
         socket.on("waitlist:updated", handleRealtimeUpdate);
         socket.on("kot:status_updated", handleRealtimeUpdate);
         socket.on("kot:item_updated", handleRealtimeUpdate);
+        socket.on("kot:updated", handleRealtimeUpdate);
+        socket.on("kitchen:item_ready", handleRealtimeUpdate);
+        socket.on("kitchen:item_status_updated", handleRealtimeUpdate);
+        socket.on("kitchen:item_served", handleRealtimeUpdate);
+        socket.on("food:delivered", handleRealtimeUpdate);
         socket.on("order:updated", handleRealtimeUpdate);
         socket.on("order:status_updated", handleRealtimeUpdate);
         socket.on("order:created", handleRealtimeUpdate);
@@ -815,6 +870,11 @@ export default function Server() {
             socket.off("waitlist:updated", handleRealtimeUpdate);
             socket.off("kot:status_updated", handleRealtimeUpdate);
             socket.off("kot:item_updated", handleRealtimeUpdate);
+            socket.off("kot:updated", handleRealtimeUpdate);
+            socket.off("kitchen:item_ready", handleRealtimeUpdate);
+            socket.off("kitchen:item_status_updated", handleRealtimeUpdate);
+            socket.off("kitchen:item_served", handleRealtimeUpdate);
+            socket.off("food:delivered", handleRealtimeUpdate);
             socket.off("order:updated", handleRealtimeUpdate);
             socket.off("order:status_updated", handleRealtimeUpdate);
             socket.off("order:created", handleRealtimeUpdate);
@@ -947,7 +1007,12 @@ export default function Server() {
 
     const handleMarkItemServed = async (item) => {
         try {
-            if (item.type === "KOT") {
+            if (item.type === "KOT_ITEM" || item.kotItemId) {
+                const targetId = item.kotItemId || item.id;
+                await api.put(`/owner/${restaurantId}/kitchen/items/${targetId}/status`, {
+                    status: "SERVED",
+                });
+            } else if (item.type === "KOT") {
                 if (item.isPartial && Array.isArray(item.itemsList) && item.itemsList.length > 0) {
                     await Promise.all(
                         item.itemsList.map((it) =>
@@ -969,9 +1034,10 @@ export default function Server() {
             }
             showToast({
                 title: "Delivered 🍽️",
-                message: `${item.tableNo ? `Table ${item.tableNo}: ` : ""}${item.kotNo ? `Ticket #${item.kotNo}` : `Order #${item.orderNo || ""}`} marked served!`,
+                message: `${item.tableNo ? `Table ${item.tableNo}: ` : ""}${item.name || item.itemName ? `${item.name || item.itemName} ` : ""}${item.kotNo ? `Ticket #${item.kotNo}` : `Order #${item.orderNo || ""}`} marked served!`,
                 variant: "success",
             });
+            refreshCanonicalReady();
             refreshReadyKots();
             refreshLiveOrders();
             refreshTables();
@@ -1428,7 +1494,7 @@ export default function Server() {
                                         <h3 className="font-black text-emerald-800 dark:text-emerald-300 text-sm sm:text-base flex items-center gap-2">
                                             <span>Ready for Distribution at Kitchen Pass</span>
                                             <span className="rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[10px] font-extrabold">
-                                                {readyItemsToDistribute.length} Ticket(s)
+                                                {readyItemsToDistribute.length} {readyItemsToDistribute.length === 1 ? "Item" : "Items"}
                                             </span>
                                         </h3>
                                         <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400 font-medium">

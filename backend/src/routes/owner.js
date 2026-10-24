@@ -49,6 +49,7 @@ import {
   deletePrinter,
   getKots,
   getPrinters,
+  getReadyItemsController,
   getStations,
   getWorkloadMetrics,
   testPrinter,
@@ -4105,6 +4106,11 @@ export default async function ownerRoutes(app, deps = {}) {
 
   app.put("/owner/:restaurantId/kitchen/items/:itemId/status", updateKotItemStatusController);
   app.put("/api/owner/:restaurantId/kitchen/items/:itemId/status", updateKotItemStatusController);
+
+  // Authoritative Ready-to-Distribute Items for Service Queue
+  app.get("/owner/:restaurantId/kitchen/ready-items", getReadyItemsController);
+  app.get("/api/owner/:restaurantId/kitchen/ready-items", getReadyItemsController);
+  app.get("/api/v1/kitchen/ready-items", getReadyItemsController);
 
   // ==========================================
   // FEATURE 20 — STAFF MANAGEMENT, WAITER WORKSPACE, RBAC & MANAGER APPROVALS
