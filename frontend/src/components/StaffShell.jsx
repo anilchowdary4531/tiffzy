@@ -16,6 +16,7 @@ import {
 import { useAuth } from "../context/AuthContext";
 import { useStaffSocket } from "../context/StaffSocketContext";
 import { resolveEffectiveStaffRole } from "../utils/staffRole";
+import { getDesignationTheme } from "../utils/staffThemes";
 
 export default function StaffShell({
     title = "Staff Workspace",
@@ -37,6 +38,7 @@ export default function StaffShell({
     const effectiveRole = resolveEffectiveStaffRole(user?.role, user?.designation || designation);
     const displayDesignation = designation || user?.designation || effectiveRole || "STAFF";
     const restaurantName = user?.restaurant?.name || "Tiffzy Restaurant";
+    const designationTheme = getDesignationTheme(displayDesignation, effectiveRole);
 
     const handleLogout = () => {
         if (window.confirm("Are you sure you want to log out of staff station?")) {
@@ -48,25 +50,25 @@ export default function StaffShell({
     return (
         <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans">
             {/* Top Navigation Header */}
-            <header className="sticky top-0 z-40 bg-neutral-900/95 backdrop-blur border-b border-neutral-800 px-4 py-3 sm:px-6">
-                <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+            <header className="sticky top-0 z-40 bg-neutral-900/95 backdrop-blur border-b border-neutral-800 px-2.5 py-2.5 sm:px-6 sm:py-3">
+                <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-3">
                     {/* Left: Brand + Restaurant + Title */}
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                         <Link
                             to={`/staff/${effectiveRole.toLowerCase()}`}
                             className="flex items-center gap-2 group shrink-0"
                             title="Tiffzy Staff Station"
                         >
-                            <div className="w-9 h-9 rounded-xl bg-orange-600 flex items-center justify-center font-black text-white text-lg shadow-lg shadow-orange-600/30 group-hover:scale-105 transition-transform">
+                            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-orange-600 flex items-center justify-center font-black text-white text-base sm:text-lg shadow-lg shadow-orange-600/30 group-hover:scale-105 transition-transform">
                                 T
                             </div>
                         </Link>
                         <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-bold text-white text-base tracking-tight truncate max-w-[140px] sm:max-w-[200px]">
+                            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                                <span className="font-bold text-white text-sm sm:text-base tracking-tight truncate max-w-[80px] min-[360px]:max-w-[120px] sm:max-w-[200px]">
                                     {restaurantName}
                                 </span>
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-500/20 text-orange-400 border border-orange-500/30 uppercase tracking-wider shrink-0">
+                                <span className={`inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold ${designationTheme.pill} uppercase tracking-wider shrink-0`}>
                                     {displayDesignation}
                                 </span>
                             </div>
@@ -90,7 +92,7 @@ export default function StaffShell({
                                         onClick={() => onTabChange(tab.id)}
                                         className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                                             isActive
-                                                ? "bg-orange-600 text-white shadow-sm"
+                                                ? `${designationTheme.accentBg} text-white shadow-sm`
                                                 : "text-neutral-400 hover:text-white hover:bg-neutral-900"
                                         }`}
                                     >
@@ -98,7 +100,7 @@ export default function StaffShell({
                                         <span>{tab.label}</span>
                                         {tab.badge !== undefined && tab.badge > 0 && (
                                             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                                                isActive ? "bg-white text-orange-600" : "bg-orange-500/30 text-orange-300"
+                                                isActive ? `bg-white ${designationTheme.accentText}` : `${designationTheme.pill}`
                                             }`}>
                                                 {tab.badge}
                                             </span>
@@ -110,7 +112,7 @@ export default function StaffShell({
                     )}
 
                     {/* Right: Actions, Realtime Status, Notifications, Profile, Logout */}
-                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                    <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
                         {actions}
 
                         {/* Connection status indicator */}
@@ -132,7 +134,7 @@ export default function StaffShell({
                         <button
                             type="button"
                             onClick={() => navigate("/staff/notifications")}
-                            className="relative min-w-[44px] min-h-[44px] rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 flex items-center justify-center transition-colors border border-neutral-700/50"
+                            className="relative min-w-[40px] min-h-[40px] sm:min-w-[44px] sm:min-h-[44px] rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 flex items-center justify-center transition-colors border border-neutral-700/50"
                             title="Notifications"
                             aria-label="View staff notifications"
                         >
@@ -148,7 +150,7 @@ export default function StaffShell({
                         <button
                             type="button"
                             onClick={() => navigate("/staff/profile")}
-                            className="min-w-[44px] min-h-[44px] rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 flex items-center justify-center transition-colors border border-neutral-700/50"
+                            className="min-w-[40px] min-h-[40px] sm:min-w-[44px] sm:min-h-[44px] rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 flex items-center justify-center transition-colors border border-neutral-700/50"
                             title="My Profile"
                             aria-label="View staff profile"
                         >
@@ -159,7 +161,7 @@ export default function StaffShell({
                         <button
                             type="button"
                             onClick={handleLogout}
-                            className="min-w-[44px] min-h-[44px] rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-300 flex items-center justify-center transition-colors border border-red-800/40"
+                            className="min-w-[40px] min-h-[40px] sm:min-w-[44px] sm:min-h-[44px] rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-300 flex items-center justify-center transition-colors border border-red-800/40"
                             title="Log Out"
                             aria-label="Log out"
                         >
@@ -171,7 +173,7 @@ export default function StaffShell({
 
             {/* Mobile Tabs Bar if tabs provided */}
             {tabs && tabs.length > 0 && onTabChange && (
-                <div className="md:hidden sticky top-[65px] z-30 bg-neutral-900/90 border-b border-neutral-800 px-3 py-2 overflow-x-auto">
+                <div className="md:hidden sticky top-[61px] z-30 bg-neutral-900/90 border-b border-neutral-800 px-2.5 py-2 overflow-x-auto scrollbar-none">
                     <div className="flex items-center gap-1.5 min-w-max">
                         {tabs.map((tab) => {
                             const isActive = activeTab === tab.id;
@@ -183,7 +185,7 @@ export default function StaffShell({
                                     onClick={() => onTabChange(tab.id)}
                                     className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap min-h-[44px] transition-all ${
                                         isActive
-                                            ? "bg-orange-600 text-white shadow-sm"
+                                            ? `${designationTheme.accentBg} text-white shadow-sm`
                                             : "bg-neutral-800/70 text-neutral-300 hover:bg-neutral-700"
                                     }`}
                                 >
@@ -191,7 +193,7 @@ export default function StaffShell({
                                     <span>{tab.label}</span>
                                     {tab.badge !== undefined && tab.badge > 0 && (
                                         <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                                            isActive ? "bg-white text-orange-600" : "bg-orange-500/30 text-orange-300"
+                                            isActive ? `bg-white ${designationTheme.accentText}` : `${designationTheme.pill}`
                                         }`}>
                                             {tab.badge}
                                         </span>

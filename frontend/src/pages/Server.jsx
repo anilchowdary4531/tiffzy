@@ -1564,7 +1564,7 @@ export default function Server() {
                             <p className="font-bold text-xs">No dining tables match selected section or search filter.</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 min-[380px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
                             {filteredTables.map((table) => {
                                 const isBlocked = Boolean(table.isBlocked);
                                 const isDirty = table.cleaningStatus === "DIRTY" || table.status === "DIRTY";

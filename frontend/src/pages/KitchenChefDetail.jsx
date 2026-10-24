@@ -24,6 +24,7 @@ import { useAuth } from "../context/AuthContext";
 import { useStaffSocket } from "../context/StaffSocketContext";
 import { api } from "../utils/apiClient";
 import { showToast } from "../utils/toast";
+import StaffWorkHistoryTabs from "../components/StaffWorkHistoryTabs";
 
 export default function KitchenChefDetail() {
   const { chefId } = useParams();
@@ -503,61 +504,27 @@ export default function KitchenChefDetail() {
       {/* Main Container */}
       <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
         {/* WORKSPACE NAVIGATION TABS (MY ASSIGNED ITEMS vs HISTORY) */}
-        <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-          <button
-            type="button"
-            data-testid="tab-assigned-items"
-            onClick={() => {
-              setViewMode("QUEUE");
-              navigate(`/kitchen/chef/${chefId}`);
-            }}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition ${
-              viewMode === "QUEUE"
-                ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm"
-                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
-            }`}
-          >
-            <UtensilsCrossed size={14} />
-            <span>MY ASSIGNED ITEMS</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                viewMode === "QUEUE"
-                  ? "bg-orange-500 text-white"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
-              }`}
-            >
-              {assignedItems.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            data-testid="tab-chef-history"
-            onClick={() => {
+        <StaffWorkHistoryTabs
+          designation="CHEF"
+          activeTab={viewMode}
+          onTabChange={(tabId) => {
+            if (tabId === "HISTORY") {
               setViewMode("HISTORY");
               navigate(`/kitchen/chef/${chefId}/history`);
-            }}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition ${
-              viewMode === "HISTORY"
-                ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm"
-                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
-            }`}
-          >
-            <History size={14} />
-            <span>HISTORY</span>
-            {historyPagination.totalCount > 0 && (
-              <span
-                className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                  viewMode === "HISTORY"
-                    ? "bg-emerald-600 text-white"
-                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
-                }`}
-              >
-                {historyPagination.totalCount}
-              </span>
-            )}
-          </button>
-        </div>
+            } else {
+              setViewMode("QUEUE");
+              navigate(`/kitchen/chef/${chefId}`);
+            }
+          }}
+          assignedCount={assignedItems.length}
+          historyCount={historyPagination.totalCount}
+          assignedLabel="MY ASSIGNED ITEMS"
+          historyLabel="HISTORY"
+          assignedIcon={UtensilsCrossed}
+          historyIcon={History}
+          assignedTestId="tab-assigned-items"
+          historyTestId="tab-chef-history"
+        />
 
         {/* ========================================================= */}
         {/* VIEW 1: MY ASSIGNED ITEMS QUEUE */}
@@ -607,7 +574,7 @@ export default function KitchenChefDetail() {
                 </div>
 
                 {/* Filter Tabs */}
-                <div className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold">
+                <div className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold overflow-x-auto max-w-full scrollbar-none">
                   {[
                     { id: "ALL", label: `All (${assignedItems.length})` },
                     { id: "PENDING", label: `Pending (${pendingItems.length})` },
@@ -618,7 +585,7 @@ export default function KitchenChefDetail() {
                       key={tab.id}
                       type="button"
                       onClick={() => setStatusFilter(tab.id)}
-                      className={`px-3 py-1 rounded-md transition ${
+                      className={`px-3 py-1.5 rounded-md whitespace-nowrap min-h-[36px] transition ${
                         statusFilter === tab.id
                           ? "bg-orange-500 text-white shadow-xs"
                           : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
@@ -651,7 +618,7 @@ export default function KitchenChefDetail() {
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                   {displayedItems.map((item) => (
                     <div
                       key={item.id}
@@ -660,7 +627,7 @@ export default function KitchenChefDetail() {
                       <div>
                         {/* Top KOT and Table row */}
                         <div className="flex items-center justify-between text-xs mb-2">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-bold text-slate-900 dark:text-slate-100">
                               #{item.kotNumber || item.kotId}
                             </span>
@@ -674,7 +641,7 @@ export default function KitchenChefDetail() {
                             )}
                           </div>
                           <span
-                            className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                            className={`text-[10px] font-black uppercase px-2 py-0.5 rounded shrink-0 ${
                               item.status === "READY"
                                 ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"
                                 : item.status === "PREPARING"
@@ -719,9 +686,9 @@ export default function KitchenChefDetail() {
                             type="button"
                             onClick={() => handleStartPreparing(item)}
                             disabled={Boolean(actionInProgress[item.id])}
-                            className="w-full py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                            className="w-full min-h-[44px] py-2.5 bg-orange-500 hover:bg-orange-600 active:scale-[0.98] disabled:opacity-50 text-white rounded-lg text-xs font-black transition flex items-center justify-center gap-2 shadow-xs"
                           >
-                            <Play size={14} />
+                            <Play size={15} />
                             START PREPARING
                           </button>
                         ) : item.status === "PREPARING" ? (
@@ -729,14 +696,14 @@ export default function KitchenChefDetail() {
                             type="button"
                             onClick={() => handleMarkReady(item)}
                             disabled={Boolean(actionInProgress[item.id])}
-                            className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                            className="w-full min-h-[44px] py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 text-white rounded-lg text-xs font-black transition flex items-center justify-center gap-2 shadow-xs"
                           >
-                            <CheckCircle2 size={14} />
+                            <CheckCircle2 size={15} />
                             MARK READY
                           </button>
                         ) : item.status === "READY" ? (
-                          <div className="py-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs font-bold text-center flex items-center justify-center gap-1.5 border border-emerald-200 dark:border-emerald-900/60">
-                            <CheckCircle2 size={14} />
+                          <div className="min-h-[44px] py-2.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs font-bold text-center flex items-center justify-center gap-1.5 border border-emerald-200 dark:border-emerald-900/60">
+                            <CheckCircle2 size={15} />
                             Ready for Waiter Pickup
                           </div>
                         ) : null}
