@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
     AlertTriangle,
     Bell,
@@ -21,8 +21,10 @@ import {
     Search,
     Settings2,
     ShoppingBag,
+    Sparkles,
     Trash2,
     Unlock,
+    User,
     UserCheck,
     UserPlus,
     Users,
@@ -232,7 +234,7 @@ export default function Server() {
     const navigate = useNavigate();
     const location = useLocation();
     const [searchParams, setSearchParams] = useSearchParams();
-    const { user, logout } = useAuth();
+    const { user, token, logout } = useAuth();
     const { socket } = useStaffSocket();
 
     const restaurantId = Number(
@@ -255,7 +257,7 @@ export default function Server() {
     // Active View Mode: "FLOOR_PLAN" | "ORDERING" | "PROFILE" | "NOTIFICATIONS" | "HISTORY"
     const getInitialViewMode = () => {
         if (location.pathname.endsWith("/history")) return "HISTORY";
-        if (location.pathname.endsWith("/profile")) return "PROFILE";
+        if (location.pathname.endsWith("/profile") || location.pathname.endsWith("/settings")) return "PROFILE";
         if (location.pathname.endsWith("/notifications")) return "NOTIFICATIONS";
         return "FLOOR_PLAN";
     };
@@ -264,7 +266,7 @@ export default function Server() {
     useEffect(() => {
         if (location.pathname.endsWith("/history")) {
             setViewMode("HISTORY");
-        } else if (location.pathname.endsWith("/profile")) {
+        } else if (location.pathname.endsWith("/profile") || location.pathname.endsWith("/settings")) {
             setViewMode("PROFILE");
         } else if (location.pathname.endsWith("/notifications")) {
             setViewMode("NOTIFICATIONS");
@@ -366,7 +368,7 @@ export default function Server() {
         setTableOverrides((prev) => {
             const next = { ...prev };
             if (idKey) next[idKey] = releasePatch;
-            if (noKey) next[noKey] = releasePatch;
+            else if (noKey) next[noKey] = releasePatch;
             return next;
         });
 
@@ -440,15 +442,18 @@ export default function Server() {
         }
     );
 
-    // Canonical Authoritative Ready-to-Distribute Items
-    const { data: canonicalReadyData, refresh: refreshCanonicalReady } = useCachedGet(
-        restaurantId ? `/owner/${restaurantId}/kitchen/ready-items` : null,
+    const { data: readyRunnerData, refresh: refreshReadyRunnerData } = useCachedGet(
+        restaurantId ? `/api/v1/staff/food-runner-items?restaurantId=${restaurantId}` : null,
         {
             enabled: Boolean(restaurantId),
             ttlMs: 3_000,
-            scope: `server-ready-items:${restaurantId}`,
+            scope: `server-ready-runner:${restaurantId}`,
         }
     );
+
+    const [distributingItemIds, setDistributingItemIds] = useState({});
+    const [realtimeAddedReadyItems, setRealtimeAddedReadyItems] = useState([]);
+    const [realtimeRemovedItemIds, setRealtimeRemovedItemIds] = useState(new Set());
 
     const tables = useMemo(() => {
         const rawTables = canonicalTables.length > 0
@@ -456,10 +461,22 @@ export default function Server() {
             : (!tablesData ? [] : Array.isArray(tablesData.tables) ? tablesData.tables : Array.isArray(tablesData) ? tablesData : []);
         if (!rawTables.length) return [];
 
-        return rawTables.map((t) => {
+        // Canonical Table Deduplication: Ensure each database table ID appears exactly once
+        const seenIds = new Set();
+        const uniqueRawTables = [];
+        for (const t of rawTables) {
+            const tid = t?.id ? Number(t.id) : null;
+            if (tid) {
+                if (seenIds.has(tid)) continue;
+                seenIds.add(tid);
+            }
+            uniqueRawTables.push(t);
+        }
+
+        return uniqueRawTables.map((t) => {
             const idKey = t.id ? String(t.id) : null;
             const noKey = t.tableNo ? String(t.tableNo).trim().toLowerCase() : null;
-            const override = (idKey && tableOverrides[idKey]) || (noKey && tableOverrides[noKey]) || null;
+            const override = (idKey && tableOverrides[idKey]) ? tableOverrides[idKey] : (!idKey && noKey && tableOverrides[noKey] ? tableOverrides[noKey] : null);
 
             if (override) {
                 // Stale HTTP response rejection:
@@ -531,109 +548,113 @@ export default function Server() {
         return Array.isArray(reservationsData.reservations) ? reservationsData.reservations : [];
     }, [reservationsData]);
 
-    // Unified Authoritative List of Ready Items to Distribute
+    // Unified Authoritative Item-Level Queue of Ready Items to Distribute (from KOTItems)
     const readyItemsToDistribute = useMemo(() => {
-        // Priority 1: Canonical item-level ready queue from backend authority
-        if (canonicalReadyData && Array.isArray(canonicalReadyData.items)) {
-            return canonicalReadyData.items.map((it) => ({
-                key: `kot-item-${it.id}`,
-                id: it.id,
-                kotItemId: it.id,
-                orderItemId: it.orderItemId,
-                kotId: it.kotId,
-                kotNo: it.kotNo,
-                orderId: it.orderId,
-                orderNo: it.orderNo,
-                tableNo: String(it.tableNo || "N/A").trim(),
-                waiterName: it.waiterName || null,
-                stationName: it.stationName || "Kitchen",
-                readyAt: it.readyAt || it.createdAt,
+        const list = [];
+        const seenItemIds = new Set();
+
+        // 1. Primary Source of Truth: Canonical food runner / ready distribution items
+        const rawRunner = Array.isArray(readyRunnerData?.items) ? readyRunnerData.items : [];
+        const runnerItems = rawRunner
+            .concat(realtimeAddedReadyItems)
+            .filter((it) => !realtimeRemovedItemIds.has(Number(it.id || it.kotItemId)));
+
+        runnerItems.forEach((it) => {
+            const itemId = Number(it.id || it.kotItemId);
+            if (!itemId || seenItemIds.has(itemId)) return;
+            seenItemIds.add(itemId);
+
+            list.push({
+                key: `ready-kotitem-${itemId}`,
+                id: itemId, // Canonical KOTItem.id
+                kotItemId: itemId,
+                orderItemId: it.orderItemId || null,
+                orderId: it.orderId || it.kot?.orderId || null,
+                kotId: it.kotId || it.kot?.id || null,
+                restaurantId: it.restaurantId || restaurantId,
                 type: "KOT_ITEM",
+                kotNo: it.kotNo || it.kot?.kotNo || "",
+                orderNo: it.orderNo || it.kot?.order?.orderNo || "",
+                tableNo: String(it.tableNo || it.kot?.tableNo || it.kot?.order?.tableNo || "N/A").trim(),
+                waiterName: it.waiterName || it.kot?.waiterName || it.kot?.order?.assignedWaiterName || it.kot?.order?.customerName || null,
+                stationName: it.stationName || it.kot?.stationName || "Kitchen",
+                readyAt: it.readyAt || it.createdAt,
                 name: it.itemName || it.name,
                 itemName: it.itemName || it.name,
                 qty: it.qty || it.quantity || 1,
-                notes: it.notes,
-                status: it.status,
+                variantName: it.variantName || null,
+                notes: it.notes || null,
+                preparedByName: it.preparedByName || null,
+                status: "READY",
                 itemsList: [
                     {
-                        id: it.id,
+                        id: itemId,
                         orderItemId: it.orderItemId,
                         name: it.itemName || it.name,
                         itemName: it.itemName || it.name,
                         qty: it.qty || it.quantity || 1,
                         notes: it.notes,
-                        status: it.status,
+                        status: "READY",
                     },
                 ],
-            }));
-        }
+            });
+        });
 
-        // Priority 2: Fallback to KOTs data for mock test compatibility
-        const list = [];
-        const seenOrderIds = new Set();
+        // 2. Compatibility Fallback: If runner items endpoint is empty or in test mocks that only mock readyKotsData
+        if (list.length === 0) {
+            const rawKots = Array.isArray(readyKotsData?.kots) ? readyKotsData.kots : Array.isArray(readyKotsData) ? readyKotsData : [];
+            rawKots.forEach((kot) => {
+                const kotStatus = String(kot.status || "").toUpperCase();
+                const rawItems = Array.isArray(kot.items) ? kot.items : [];
+                const isKotReady = kotStatus === "READY";
+                const readyItemsInKot = rawItems.filter((it) => String(it.status || "").toUpperCase() === "READY");
+                const itemsToInclude = isKotReady ? (readyItemsInKot.length > 0 ? readyItemsInKot : rawItems) : readyItemsInKot;
 
-        const rawKots = Array.isArray(readyKotsData?.kots) ? readyKotsData.kots : Array.isArray(readyKotsData) ? readyKotsData : [];
-        rawKots.forEach((kot) => {
-            const kotStatus = String(kot.status || "").toUpperCase();
-            const rawItems = Array.isArray(kot.items) ? kot.items : [];
-            const isKotReady = kotStatus === "READY";
-            const readyItemsInKot = rawItems.filter((it) => String(it.status || "").toUpperCase() === "READY");
+                itemsToInclude.forEach((it) => {
+                    const itemId = Number(it.id);
+                    if (itemId && (seenItemIds.has(itemId) || realtimeRemovedItemIds.has(itemId))) return;
+                    if (itemId) seenItemIds.add(itemId);
 
-            if (isKotReady || readyItemsInKot.length > 0) {
-                if (kot.orderId) seenOrderIds.add(Number(kot.orderId));
-                const itemsToShow = isKotReady ? rawItems : readyItemsInKot;
-                list.push({
-                    key: `kot-${kot.id}`,
-                    id: kot.id,
-                    type: "KOT",
-                    kotNo: kot.kotNo,
-                    orderId: kot.orderId,
-                    tableNo: String(kot.tableNo || kot.order?.tableNo || "N/A").trim(),
-                    waiterName: kot.waiterName || kot.order?.customerName || null,
-                    stationName: kot.stationName || "Kitchen",
-                    readyAt: kot.updatedAt || kot.createdAt,
-                    isPartial: !isKotReady && readyItemsInKot.length > 0,
-                    itemsList: itemsToShow.map((it) => ({
-                        id: it.id,
-                        orderItemId: it.orderItemId,
+                    list.push({
+                        key: `ready-kotitem-${itemId || `synth-${kot.id}-${it.itemName}`}`,
+                        id: itemId || kot.id,
+                        kotItemId: itemId || null,
+                        orderItemId: it.orderItemId || null,
+                        orderId: kot.orderId,
+                        kotId: kot.id,
+                        restaurantId: kot.restaurantId || restaurantId,
+                        type: "KOT_ITEM",
+                        kotNo: kot.kotNo || "",
+                        orderNo: kot.order?.orderNo || "",
+                        tableNo: String(kot.tableNo || kot.order?.tableNo || "N/A").trim(),
+                        waiterName: kot.waiterName || kot.order?.customerName || null,
+                        stationName: kot.stationName || "Kitchen",
+                        readyAt: it.readyAt || kot.updatedAt || kot.createdAt,
                         name: it.itemName || it.name,
                         itemName: it.itemName || it.name,
                         qty: it.qty || it.quantity || 1,
-                        notes: it.notes,
-                        status: it.status,
-                    })),
+                        variantName: it.variantName || null,
+                        notes: it.notes || null,
+                        preparedByName: it.preparedByName || null,
+                        status: "READY",
+                        itemsList: [
+                            {
+                                id: itemId || kot.id,
+                                orderItemId: it.orderItemId,
+                                name: it.itemName || it.name,
+                                itemName: it.itemName || it.name,
+                                qty: it.qty || it.quantity || 1,
+                                notes: it.notes,
+                                status: "READY",
+                            },
+                        ],
+                    });
                 });
-            }
-        });
-
-        // Priority 3: Collect from Ready Orders (if not already captured as a ready KOT)
-        const rawOrders = Array.isArray(liveOrdersData?.orders) ? liveOrdersData.orders : Array.isArray(liveOrdersData) ? liveOrdersData : [];
-        rawOrders.forEach((order) => {
-            if (String(order.status || "").toUpperCase() === "READY" && !seenOrderIds.has(Number(order.id))) {
-                list.push({
-                    key: `order-${order.id}`,
-                    id: order.id,
-                    type: "ORDER",
-                    orderNo: order.orderNo,
-                    orderId: order.id,
-                    tableNo: String(order.tableNo || "N/A").trim(),
-                    waiterName: order.assignedWaiterName || order.waiterName || order.customerName || null,
-                    stationName: "Kitchen",
-                    readyAt: order.updatedAt || order.createdAt,
-                    isPartial: false,
-                    itemsList: Array.isArray(order.items)
-                        ? order.items.map((it) => ({
-                              name: it.itemName,
-                              qty: it.qty,
-                              notes: it.notes,
-                          }))
-                        : [],
-                });
-            }
-        });
+            });
+        }
 
         return list;
-    }, [canonicalReadyData, readyKotsData, liveOrdersData]);
+    }, [readyRunnerData, readyKotsData, restaurantId, realtimeAddedReadyItems, realtimeRemovedItemIds]);
 
     // Map table number (and normalized key) to count of ready items waiting for pickup
     const readyItemsByTable = useMemo(() => {
@@ -642,11 +663,11 @@ export default function Server() {
             const raw = String(item.tableNo || "").trim();
             if (!raw || raw === "N/A") return;
             const norm = normalizeTableKey(raw);
-            map.set(raw, (map.get(raw) || 0) + 1);
-            map.set(raw.toLowerCase(), (map.get(raw.toLowerCase()) || 0) + 1);
-            if (norm) {
-                map.set(norm, (map.get(norm) || 0) + 1);
-            }
+            const keysToIncrement = new Set([raw]);
+            if (norm) keysToIncrement.add(norm);
+            keysToIncrement.forEach((k) => {
+                map.set(k, (map.get(k) || 0) + 1);
+            });
         });
         return map;
     }, [readyItemsToDistribute]);
@@ -661,7 +682,7 @@ export default function Server() {
     const sections = useMemo(() => {
         const set = new Set(["ALL"]);
         tables.forEach((t) => {
-            const sec = String(t.section || "Main Hall").trim();
+            const sec = String(t.section || "Location not configured").trim();
             if (sec) set.add(sec);
         });
         return Array.from(set);
@@ -673,7 +694,7 @@ export default function Server() {
         refreshReservations,
         refreshLiveOrders,
         refreshReadyKots,
-        refreshCanonicalReady,
+        refreshReadyRunnerData,
         fetchUnreadCount,
         handleViewAssignedTable: null,
         user,
@@ -685,7 +706,7 @@ export default function Server() {
             refreshReservations,
             refreshLiveOrders,
             refreshReadyKots,
-            refreshCanonicalReady,
+            refreshReadyRunnerData,
             fetchUnreadCount,
             handleViewAssignedTable,
             user,
@@ -714,7 +735,35 @@ export default function Server() {
             callbacksRef.current.refreshReservations?.({ force: true });
             callbacksRef.current.refreshLiveOrders?.({ force: true });
             callbacksRef.current.refreshReadyKots?.({ force: true });
-            callbacksRef.current.refreshCanonicalReady?.({ force: true });
+            callbacksRef.current.refreshReadyRunnerData?.({ force: true });
+
+            // Instant Realtime Ready-Item Queue Synchronization
+            const readyItem = data?.item || (data?.status === "READY" ? data : null);
+            if (readyItem && (readyItem.status === "READY" || data?.action === "READY")) {
+                const itemId = Number(readyItem.id || readyItem.kotItemId);
+                if (itemId) {
+                    setRealtimeRemovedItemIds((prev) => {
+                        if (!prev.has(itemId)) return prev;
+                        const next = new Set(prev);
+                        next.delete(itemId);
+                        return next;
+                    });
+                    setRealtimeAddedReadyItems((prev) => {
+                        if (prev.some((it) => Number(it.id || it.kotItemId) === itemId)) return prev;
+                        return [...prev, readyItem];
+                    });
+                }
+            }
+
+            const deliveredItemId = Number(data?.itemId || data?.kotItemId || (data?.status === "SERVED" || data?.status === "DELIVERED" ? data?.id : 0));
+            if (deliveredItemId) {
+                setRealtimeRemovedItemIds((prev) => {
+                    const next = new Set(prev);
+                    next.add(deliveredItemId);
+                    return next;
+                });
+                setRealtimeAddedReadyItems((prev) => prev.filter((it) => Number(it.id || it.kotItemId) !== deliveredItemId));
+            }
 
             if (data?.tableId) {
                 setSelectedTable((prev) => {
@@ -746,15 +795,14 @@ export default function Server() {
                 });
             }
 
-            const status = String(data?.status || data?.kot?.status || data?.item?.status || "").toUpperCase();
-            if (status === "READY" || data?.event === "kitchen:item_ready") {
+            const status = String(data?.status || data?.kot?.status || "").toUpperCase();
+            if (status === "READY") {
                 playNotificationSound();
-                const tableNum = data?.tableNo || data?.kot?.tableNo || data?.order?.tableNo || data?.item?.tableNo || data?.item?.kot?.tableNo;
+                const tableNum = data?.tableNo || data?.kot?.tableNo || data?.order?.tableNo;
                 const orderNum = data?.orderNo || data?.kot?.kotNo || data?.order?.orderNo;
-                const itemName = data?.item?.itemName || data?.item?.name || "";
                 showToast({
                     title: "🔔 Food Ready to Distribute!",
-                    message: `${tableNum ? `Table ${tableNum}: ` : ""}${itemName ? `${itemName} ` : ""}${orderNum ? `(Ticket #${orderNum})` : "Items"} ready at kitchen pass!`,
+                    message: `${tableNum ? `Table ${tableNum}: ` : ""}${orderNum ? `Ticket #${orderNum}` : "Items"} ready at kitchen pass!`,
                     variant: "success",
                 });
             }
@@ -811,21 +859,24 @@ export default function Server() {
             const typeUpper = String(notif?.notificationType || notif?.type || "").toUpperCase();
             const isAssigned = typeUpper === "TABLE_ASSIGNMENT" || notif?.data?.action === "ASSIGNED" || notif?.data?.action === "REASSIGNED";
             const isUnassigned = typeUpper === "TABLE_UNASSIGNED" || notif?.data?.action === "UNASSIGNED";
+            const isKotSent = typeUpper === "KOT_SENT" || notif?.data?.action === "KOT_SENT";
 
-            if (isAssigned || isUnassigned) {
+            if (isAssigned || isUnassigned || isKotSent) {
                 playNotificationSound();
                 const targetTableNo = notif.tableNo || notif.data?.tableNo || "";
                 const targetTableId = notif.tableId || notif.data?.tableId || null;
 
                 showToast({
-                    title: notif.title || (isAssigned ? (targetTableNo ? `📋 Table Assigned — Table ${targetTableNo}` : "📋 Table Assigned") : "Table Unassigned"),
+                    title: notif.title || (isAssigned ? (targetTableNo ? `📋 Table Assigned — Table ${targetTableNo}` : "📋 Table Assigned") : isKotSent ? (targetTableNo ? `🍳 Order Sent to Kitchen — Table ${targetTableNo}` : "🍳 Order Sent to Kitchen") : "Table Unassigned"),
                     message: notif.message || (isAssigned
                         ? (targetTableNo ? `Table ${targetTableNo} has been assigned to you. Please check/attend Table ${targetTableNo}.` : "A table has been assigned to you.")
-                        : (targetTableNo ? `Table ${targetTableNo} assignment updated.` : "Table assignment updated.")),
-                    variant: isAssigned ? "success" : "info",
-                    actionLabel: isAssigned && (targetTableNo || targetTableId) ? "View Table" : undefined,
-                    durationMs: isAssigned ? 8000 : 4000,
-                    onAction: isAssigned && (targetTableNo || targetTableId) ? () => {
+                        : isKotSent
+                            ? (targetTableNo ? `Order sent to kitchen for Table ${targetTableNo}` : "Order sent to kitchen")
+                            : (targetTableNo ? `Table ${targetTableNo} assignment updated.` : "Table assignment updated.")),
+                    variant: isAssigned || isKotSent ? "success" : "info",
+                    actionLabel: (isAssigned || isKotSent) && (targetTableNo || targetTableId) ? "View Table" : undefined,
+                    durationMs: (isAssigned || isKotSent) ? 8000 : 4000,
+                    onAction: (isAssigned || isKotSent) && (targetTableNo || targetTableId) ? () => {
                         callbacksRef.current.handleViewAssignedTable?.(targetTableNo, targetTableId);
                     } : undefined,
                 });
@@ -834,10 +885,12 @@ export default function Server() {
         };
 
         const handleConnect = () => {
+            setRealtimeAddedReadyItems([]);
+            setRealtimeRemovedItemIds(new Set());
             callbacksRef.current.refreshTables?.({ force: true });
             callbacksRef.current.refreshLiveOrders?.({ force: true });
             callbacksRef.current.refreshReadyKots?.({ force: true });
-            callbacksRef.current.refreshCanonicalReady?.({ force: true });
+            callbacksRef.current.refreshReadyRunnerData?.({ force: true });
         };
 
         socket.on("connect", handleConnect);
@@ -848,11 +901,9 @@ export default function Server() {
         socket.on("waitlist:updated", handleRealtimeUpdate);
         socket.on("kot:status_updated", handleRealtimeUpdate);
         socket.on("kot:item_updated", handleRealtimeUpdate);
-        socket.on("kot:updated", handleRealtimeUpdate);
         socket.on("kitchen:item_ready", handleRealtimeUpdate);
-        socket.on("kitchen:item_status_updated", handleRealtimeUpdate);
-        socket.on("kitchen:item_served", handleRealtimeUpdate);
         socket.on("food:delivered", handleRealtimeUpdate);
+        socket.on("kitchen:item_status_updated", handleRealtimeUpdate);
         socket.on("order:updated", handleRealtimeUpdate);
         socket.on("order:status_updated", handleRealtimeUpdate);
         socket.on("order:created", handleRealtimeUpdate);
@@ -870,11 +921,9 @@ export default function Server() {
             socket.off("waitlist:updated", handleRealtimeUpdate);
             socket.off("kot:status_updated", handleRealtimeUpdate);
             socket.off("kot:item_updated", handleRealtimeUpdate);
-            socket.off("kot:updated", handleRealtimeUpdate);
             socket.off("kitchen:item_ready", handleRealtimeUpdate);
-            socket.off("kitchen:item_status_updated", handleRealtimeUpdate);
-            socket.off("kitchen:item_served", handleRealtimeUpdate);
             socket.off("food:delivered", handleRealtimeUpdate);
+            socket.off("kitchen:item_status_updated", handleRealtimeUpdate);
             socket.off("order:updated", handleRealtimeUpdate);
             socket.off("order:status_updated", handleRealtimeUpdate);
             socket.off("order:created", handleRealtimeUpdate);
@@ -1006,47 +1055,61 @@ export default function Server() {
     }, [tables, selectedTable]);
 
     const handleMarkItemServed = async (item) => {
+        if (!item) return;
+        const itemId = Number(item.kotItemId || item.id);
+        if (itemId) {
+            setDistributingItemIds((prev) => ({ ...prev, [itemId]: true }));
+            setRealtimeRemovedItemIds((prev) => {
+                const next = new Set(prev);
+                next.add(itemId);
+                return next;
+            });
+            setRealtimeAddedReadyItems((prev) => prev.filter((existing) => Number(existing.id || existing.kotItemId) !== itemId));
+        }
         try {
-            if (item.type === "KOT_ITEM" || item.kotItemId) {
-                const targetId = item.kotItemId || item.id;
-                await api.put(`/owner/${restaurantId}/kitchen/items/${targetId}/status`, {
-                    status: "SERVED",
-                });
-            } else if (item.type === "KOT") {
-                if (item.isPartial && Array.isArray(item.itemsList) && item.itemsList.length > 0) {
-                    await Promise.all(
-                        item.itemsList.map((it) =>
-                            api.put(`/owner/${restaurantId}/kitchen/items/${it.id}/status`, {
-                                status: "SERVED",
-                            })
-                        )
-                    );
-                } else {
-                    await api.put(`/owner/${restaurantId}/kots/${item.id}/status`, {
-                        status: "SERVED",
-                    });
-                }
-            } else {
+            if (item.type === "ORDER") {
                 await api.put(`/owner/${restaurantId}/orders/${item.id}/status`, {
                     status: "DELIVERED",
                     changedByName: user?.name || "Server",
                 });
+            } else {
+                // Authoritative KOTItem delivery
+                try {
+                    await api.put(`/api/v1/staff/food-runner-items/${itemId}/delivered`);
+                } catch (runnerErr) {
+                    if (item.kotId) {
+                        await api.put(`/owner/${restaurantId}/kitchen/items/${itemId}/status`, {
+                            status: "SERVED",
+                        });
+                    } else if (item.type === "KOT") {
+                        await api.put(`/owner/${restaurantId}/kots/${item.id}/status`, {
+                            status: "SERVED",
+                        });
+                    } else {
+                        throw runnerErr;
+                    }
+                }
             }
+
             showToast({
                 title: "Delivered 🍽️",
-                message: `${item.tableNo ? `Table ${item.tableNo}: ` : ""}${item.name || item.itemName ? `${item.name || item.itemName} ` : ""}${item.kotNo ? `Ticket #${item.kotNo}` : `Order #${item.orderNo || ""}`} marked served!`,
+                message: `${item.tableNo ? `Table ${item.tableNo}: ` : ""}${item.name || item.itemName || (item.kotNo ? `Ticket #${item.kotNo}` : "Item")} marked served!`,
                 variant: "success",
             });
-            refreshCanonicalReady();
-            refreshReadyKots();
-            refreshLiveOrders();
-            refreshTables();
+            refreshReadyRunnerData?.({ force: true });
+            refreshReadyKots?.({ force: true });
+            refreshLiveOrders?.({ force: true });
+            refreshTables?.({ force: true });
         } catch (err) {
             showToast({
                 title: "Error",
                 message: err?.response?.data?.message || err?.message || "Failed to mark item served",
                 variant: "error",
             });
+        } finally {
+            if (itemId) {
+                setDistributingItemIds((prev) => ({ ...prev, [itemId]: false }));
+            }
         }
     };
 
@@ -1076,7 +1139,7 @@ export default function Server() {
     // Filter tables based on Section, Search query, and Shift time
     const filteredTables = useMemo(() => {
         return tables.filter((t) => {
-            if (activeSectionFilter !== "ALL" && String(t.section || "Main Hall").trim() !== activeSectionFilter) {
+            if (activeSectionFilter !== "ALL" && String(t.section || "Location not configured").trim() !== activeSectionFilter) {
                 return false;
             }
             if (searchQuery) {
@@ -1157,9 +1220,11 @@ export default function Server() {
             const assignedId = selectedTable.assignedWaiterId || selectedTable.activeSession?.waiterId || (user?.role === "WAITER" || user?.role === "SERVER" ? user?.id : null);
             const assignedName = selectedTable.assignedWaiterName || selectedTable.activeSession?.waiterName || (user?.role === "WAITER" || user?.role === "SERVER" ? user?.name : null);
 
+            const canonicalTableSessionId = selectedTable.tableSessionId || selectedTable.sessionId || selectedTable.activeSession?.id || null;
             const payload = {
                 tableNo: selectedTable.tableNo,
                 tableId: selectedTable.id,
+                tableSessionId: canonicalTableSessionId,
                 waiterId: assignedId || null,
                 waiterName: assignedName || null,
                 items: itemsList.map((i) => ({
@@ -1171,7 +1236,12 @@ export default function Server() {
                 fulfillment: "DINEIN",
             };
 
-            const res = await axios.post(`${API}/owner/${restaurantId}/orders`, payload);
+            const res = token
+                ? await axios.post(`${API}/owner/${restaurantId}/orders`, payload, {
+                      headers: { Authorization: `Bearer ${token}` },
+                      withCredentials: true,
+                  })
+                : await axios.post(`${API}/owner/${restaurantId}/orders`, payload);
             if (res.data?.success) {
                 showToast({
                     title: "KOT Sent to Kitchen! 🍳",
@@ -1236,33 +1306,32 @@ export default function Server() {
     return (
         <div className="min-h-screen bg-[color:var(--app-bg,#f8fafc)] text-[color:var(--app-text,#0f172a)] font-sans flex flex-col">
             {/* Top Navigation & Status Bar */}
-            <header className="sticky top-0 z-30 border-b border-[color:var(--app-border)]/50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 sm:px-4 py-2.5 sm:py-3 shadow-xs flex flex-wrap lg:flex-nowrap items-center justify-between gap-2.5 sm:gap-3">
-                {/* Brand & Branch Info */}
-                <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[#d8c3a3] bg-white p-1 shadow-[0_4px_14px_rgba(104,70,37,0.12)]">
-                        <BrandLogo className="h-full w-full" title="Tiffzy logo" />
-                    </div>
-                    <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0">
-                            <span className="text-sm sm:text-base font-black tracking-tight text-orange-500">
-                                Tiffzy
-                            </span>
-                            <span className="text-xs font-extrabold text-[color:var(--app-muted)] hidden min-[360px]:inline">•</span>
-                            <h1 className="text-xs sm:text-base font-extrabold tracking-tight text-[color:var(--app-text)] truncate max-w-[120px] min-[400px]:max-w-[180px] sm:max-w-[240px]">{restaurantName}</h1>
-                            <span className="rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 px-2 py-0.5 text-[9px] sm:text-[10px] font-bold border border-orange-500/30 whitespace-nowrap">
-                                Server Station
-                            </span>
-                        </div>
-                        <p className="text-[10px] sm:text-[11px] theme-muted flex items-center gap-1.5 flex-wrap">
-                            <span>🕒 {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            <span className="hidden min-[360px]:inline">•</span>
-                            <span>📅 {currentTime.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                        </p>
+            <header className="sticky top-0 z-30 border-b border-[color:var(--app-border)]/50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-2.5 sm:px-4 h-14 sm:h-[60px] max-h-[64px] shadow-xs flex items-center justify-between gap-1.5 sm:gap-2.5 overflow-x-auto lg:overflow-visible scrollbar-none">
+                {/* Brand & Branch Info — Owner Panel Branding */}
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 min-w-0">
+                    <Link
+                        to="/server"
+                        className="flex items-center gap-1.5 shrink-0 group focus:outline-none"
+                        title="Tiffzy Server Station"
+                    >
+                        <BrandLogo className="theme-brand-logo h-6 w-6 sm:h-7 sm:w-7 shrink-0" title="Tiffzy logo" />
+                        <span className="theme-brand-text text-base sm:text-lg font-bold tracking-tight group-hover:opacity-90 transition-opacity">
+                            Tiffzy
+                        </span>
+                    </Link>
+                    <div className="min-w-0 flex items-center gap-1 sm:gap-1.5">
+                        <span className="text-xs font-extrabold text-[color:var(--app-muted)] hidden min-[360px]:inline">•</span>
+                        <h1 className="text-xs sm:text-sm font-extrabold tracking-tight text-[color:var(--app-text)] truncate max-w-[90px] min-[400px]:max-w-[130px] lg:max-w-[160px]">
+                            {restaurantName}
+                        </h1>
+                        <span className="rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 text-[9px] sm:text-[10px] font-bold border border-orange-500/30 whitespace-nowrap">
+                            Server Station
+                        </span>
                     </div>
                 </div>
 
                 {/* Meal Shift Selector */}
-                <div className="flex items-center gap-1 bg-black/5 dark:bg-white/5 p-1 rounded-xl border border-[color:var(--app-border)]/40 overflow-x-auto scrollbar-none max-w-full shrink-0 my-0.5 sm:my-0">
+                <div className="flex items-center gap-0.5 bg-black/5 dark:bg-white/5 p-0.5 sm:p-1 rounded-xl border border-[color:var(--app-border)]/40 shrink-0">
                     {[
                         { id: "BREAKFAST", label: "🍳 Breakfast", time: `${shiftConfig.breakfast.start}-${shiftConfig.breakfast.end}` },
                         { id: "LUNCH", label: "🍱 Lunch", time: `${shiftConfig.lunch.start}-${shiftConfig.lunch.end}` },
@@ -1270,23 +1339,28 @@ export default function Server() {
                     ].map((shift) => (
                         <button
                             key={shift.id}
+                            type="button"
                             onClick={() => setActiveShift(shift.id)}
-                            className={`flex flex-col items-center rounded-lg px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-bold transition whitespace-nowrap ${
+                            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] sm:text-xs font-bold transition whitespace-nowrap h-7 sm:h-8 ${
                                 activeShift === shift.id
                                     ? "bg-orange-500 text-white shadow-xs"
                                     : "theme-muted hover:text-[color:var(--app-text)]"
                             }`}
                         >
                             <span>{shift.label}</span>
-                            <span className="text-[8px] sm:text-[9px] opacity-80 font-normal">{shift.time}</span>
+                            <span className={`text-[8.5px] sm:text-[9.5px] font-normal hidden xl:inline ${activeShift === shift.id ? "text-white/85" : "opacity-70"}`}>
+                                {shift.time}
+                            </span>
                         </button>
                     ))}
                     <button
+                        type="button"
                         onClick={() => setIsShiftConfigOpen(true)}
-                        className="p-1.5 text-slate-400 hover:text-orange-500 rounded-lg transition shrink-0"
+                        className="p-1 text-slate-400 hover:text-orange-500 rounded-lg transition shrink-0"
                         title="Configure Shift Timings"
+                        aria-label="Configure Shift Timings"
                     >
-                        <Settings2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <Settings2 className="h-3.5 w-3.5" />
                     </button>
                 </div>
 
@@ -1294,6 +1368,7 @@ export default function Server() {
                 <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     {/* Ready to Distribute Trigger Button */}
                     <button
+                        type="button"
                         onClick={() => {
                             const el = document.getElementById("ready-distribution-section");
                             if (el) {
@@ -1306,14 +1381,15 @@ export default function Server() {
                                 });
                             }
                         }}
-                        className={`relative flex items-center gap-1.5 rounded-xl border px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-extrabold transition cursor-pointer whitespace-nowrap shadow-xs ${
+                        className={`relative flex items-center gap-1 sm:gap-1.5 rounded-lg sm:rounded-xl border px-2 sm:px-2.5 h-8 sm:h-9 text-[11px] sm:text-xs font-extrabold transition cursor-pointer whitespace-nowrap shadow-xs ${
                             readyItemsToDistribute.length > 0
                                 ? "border-emerald-500 bg-emerald-500 text-white shadow-emerald-500/25 animate-pulse"
                                 : "border-[color:var(--app-border)]/40 bg-white/60 dark:bg-slate-900/60 theme-muted hover:text-[color:var(--app-text)]"
                         }`}
                         title="Kitchen Pass / Ready to Distribute"
+                        aria-label="Kitchen Pass / Ready to Distribute"
                     >
-                        <Bell className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${readyItemsToDistribute.length > 0 ? "animate-bounce" : ""}`} />
+                        <Bell className={`h-3.5 w-3.5 ${readyItemsToDistribute.length > 0 ? "animate-bounce" : ""}`} />
                         <span>Ready to Distribute</span>
                         <span className={`rounded-full px-1.5 py-0.2 text-[9px] sm:text-[10px] font-black ${
                             readyItemsToDistribute.length > 0 ? "bg-white text-emerald-700" : "bg-black/10 dark:bg-white/10"
@@ -1324,10 +1400,12 @@ export default function Server() {
 
                     {/* Waitlist Drawer Trigger */}
                     <button
+                        type="button"
                         onClick={() => setIsWaitlistOpen(true)}
-                        className="relative flex items-center gap-1 sm:gap-1.5 rounded-xl border border-orange-500/30 bg-orange-500/10 px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-500/20 transition cursor-pointer whitespace-nowrap"
+                        className="relative flex items-center gap-1 sm:gap-1.5 rounded-lg sm:rounded-xl border border-orange-500/30 bg-orange-500/10 px-2 sm:px-2.5 h-8 sm:h-9 text-[11px] sm:text-xs font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-500/20 transition cursor-pointer whitespace-nowrap"
+                        aria-label="Waitlist"
                     >
-                        <Users className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <Users className="h-3.5 w-3.5" />
                         <span className="hidden min-[450px]:inline">Waitlist</span>
                         {waitlistSummary.waitingCount > 0 && (
                             <span className="rounded-full bg-orange-500 text-white px-1.5 py-0.2 text-[9px] sm:text-[10px]">
@@ -1338,36 +1416,41 @@ export default function Server() {
 
                     {/* New Reservation Trigger */}
                     <button
+                        type="button"
                         onClick={() => {
                             setEditingReservation(null);
                             setIsReservationModalOpen(true);
                         }}
-                        className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-orange-500 px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold text-white hover:bg-orange-600 transition shadow-xs cursor-pointer whitespace-nowrap"
+                        className="flex items-center gap-1 sm:gap-1.5 rounded-lg sm:rounded-xl bg-orange-500 px-2 sm:px-2.5 h-8 sm:h-9 text-[11px] sm:text-xs font-bold text-white hover:bg-orange-600 transition shadow-xs cursor-pointer whitespace-nowrap"
+                        aria-label="New Reservation"
                     >
-                        <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <Plus className="h-3.5 w-3.5" />
                         <span><span className="hidden min-[400px]:inline">New </span>Reservation</span>
                     </button>
 
                     {/* Active Service Tab/Button */}
                     <button
+                        type="button"
                         data-testid="server-active-service-nav-btn"
                         onClick={() => {
                             setViewMode("FLOOR_PLAN");
                             navigate("/server");
                         }}
-                        className={`flex items-center gap-1.5 rounded-xl border px-2.5 sm:px-3 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold transition cursor-pointer whitespace-nowrap shadow-xs ${
+                        className={`flex items-center gap-1 sm:gap-1.5 rounded-lg sm:rounded-xl border px-2 sm:px-2.5 h-8 sm:h-9 text-[11px] sm:text-xs font-bold transition cursor-pointer whitespace-nowrap shadow-xs ${
                             viewMode === "FLOOR_PLAN" || viewMode === "ORDERING"
                                 ? "border-orange-500 bg-orange-500 text-white shadow-xs shadow-orange-500/20"
                                 : "border-[color:var(--app-border)]/40 bg-white/60 dark:bg-slate-900/60 theme-muted hover:text-[color:var(--app-text)]"
                         }`}
                         title="Active Service Floor Plan"
+                        aria-label="Active Service Floor Plan"
                     >
-                        <LayoutGrid className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                        <span className="hidden min-[480px]:inline">Active Service</span>
+                        <LayoutGrid className="h-3.5 w-3.5" />
+                        <span className="hidden xl:inline">Active Service</span>
                     </button>
 
                     {/* History Button */}
                     <button
+                        type="button"
                         data-testid="server-history-nav-btn"
                         onClick={() => {
                             if (viewMode === "HISTORY") {
@@ -1378,19 +1461,21 @@ export default function Server() {
                                 navigate("/server/history");
                             }
                         }}
-                        className={`relative flex items-center gap-1.5 rounded-xl border px-2.5 sm:px-3 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold transition cursor-pointer whitespace-nowrap shadow-xs ${
+                        className={`relative flex items-center justify-center rounded-lg sm:rounded-xl border w-8 h-8 sm:w-9 sm:h-9 transition cursor-pointer shrink-0 shadow-xs ${
                             viewMode === "HISTORY"
                                 ? "border-orange-500 bg-orange-500 text-white shadow-xs shadow-orange-500/20"
                                 : "border-[color:var(--app-border)]/40 bg-white/60 dark:bg-slate-900/60 theme-muted hover:text-[color:var(--app-text)]"
                         }`}
-                        title="Server Food-Service History"
+                        title="History"
+                        aria-label="History"
                     >
-                        <HistoryIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                        <span className="hidden min-[480px]:inline">History</span>
+                        <HistoryIcon className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
                     </button>
 
                     {/* Notifications Button */}
                     <button
+                        type="button"
+                        data-testid="server-notifications-nav-btn"
                         onClick={() => {
                             if (viewMode === "NOTIFICATIONS") {
                                 setViewMode("FLOOR_PLAN");
@@ -1400,47 +1485,82 @@ export default function Server() {
                                 navigate("/server/notifications");
                             }
                         }}
-                        className={`relative flex items-center gap-1.5 rounded-xl border px-2.5 sm:px-3 py-1.5 sm:py-2 text-[11px] sm:text-xs font-bold transition cursor-pointer whitespace-nowrap shadow-xs ${
+                        className={`relative flex items-center justify-center rounded-lg sm:rounded-xl border w-8 h-8 sm:w-9 sm:h-9 transition cursor-pointer shrink-0 shadow-xs ${
                             viewMode === "NOTIFICATIONS"
-                                ? "border-orange-500 bg-orange-500 text-white"
+                                ? "border-orange-500 bg-orange-500 text-white shadow-xs shadow-orange-500/20"
                                 : "border-[color:var(--app-border)]/40 bg-white/60 dark:bg-slate-900/60 theme-muted hover:text-[color:var(--app-text)]"
                         }`}
-                        title="Server Notifications"
+                        title="Notifications"
+                        aria-label="Notifications"
                     >
-                        <Bell className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                        <span className="hidden min-[500px]:inline">Notifications</span>
+                        <Bell className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
                         {unreadNotificationCount > 0 && (
-                            <span className="rounded-full bg-rose-500 text-white px-1.5 py-0.2 text-[9px] sm:text-[10px] font-black animate-pulse">
-                                {unreadNotificationCount}
+                            <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] sm:text-[10px] font-black text-white shadow-xs animate-pulse">
+                                {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
                             </span>
                         )}
                     </button>
 
-                    {/* Profile Button */}
-                    <button
-                        onClick={() => {
-                            if (viewMode === "PROFILE") {
-                                setViewMode("FLOOR_PLAN");
-                                navigate("/server");
-                            } else {
-                                setViewMode("PROFILE");
-                                navigate("/server/profile");
-                            }
-                        }}
-                        className={`flex items-center gap-1.5 rounded-xl border px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold transition cursor-pointer whitespace-nowrap shadow-xs ${
-                            viewMode === "PROFILE"
-                                ? "border-orange-500 bg-orange-500 text-white"
-                                : "border-[color:var(--app-border)]/40 bg-white/60 dark:bg-slate-900/60 theme-muted hover:text-[color:var(--app-text)]"
-                        }`}
-                        title="My Profile"
-                    >
-                        <div className={`h-5 w-5 rounded-full flex items-center justify-center font-black text-[10px] ${
-                            viewMode === "PROFILE" ? "bg-white text-orange-600" : "bg-orange-500 text-white"
-                        }`}>
-                            {(user?.name || user?.username || "S").charAt(0).toUpperCase()}
+                    {/* Staff Profile Area with Time & Date aligned horizontally on the same baseline */}
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                        {/* Time & Date Display (Authoritative) */}
+                        <div className="text-right leading-none select-none flex flex-col items-end justify-center py-0.5" data-testid="server-station-clock">
+                            <span className="text-[10px] sm:text-[11px] font-bold text-[color:var(--app-text,#0f172a)] tabular-nums tracking-tight">
+                                {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            <span className="text-[8.5px] sm:text-[9.5px] font-medium text-[color:var(--app-muted,#64748b)] whitespace-nowrap mt-0.5">
+                                {currentTime.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/,/g, '')}
+                            </span>
                         </div>
-                        <span className="hidden sm:inline font-bold">{user?.name?.split(" ")[0] || "Profile"}</span>
-                    </button>
+
+                        {/* Settings Button */}
+                        <button
+                            type="button"
+                            data-testid="server-settings-btn"
+                            onClick={() => {
+                                if (viewMode === "PROFILE" && location.pathname.endsWith("/settings")) {
+                                    setViewMode("FLOOR_PLAN");
+                                    navigate("/server");
+                                } else {
+                                    setViewMode("PROFILE");
+                                    navigate("/server/settings");
+                                }
+                            }}
+                            className={`flex items-center justify-center rounded-lg sm:rounded-xl border w-8 h-8 sm:w-9 sm:h-9 transition cursor-pointer shrink-0 shadow-xs ${
+                                viewMode === "PROFILE" && location.pathname.endsWith("/settings")
+                                    ? "border-orange-500 bg-orange-500 text-white shadow-xs shadow-orange-500/20"
+                                    : "border-[color:var(--app-border)]/40 bg-white/60 dark:bg-slate-900/60 theme-muted hover:text-[color:var(--app-text)]"
+                            }`}
+                            title="Settings"
+                            aria-label="Settings"
+                        >
+                            <Settings2 className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
+                        </button>
+
+                        {/* Profile Button */}
+                        <button
+                            type="button"
+                            data-testid="server-profile-btn"
+                            onClick={() => {
+                                if (viewMode === "PROFILE" && !location.pathname.endsWith("/settings")) {
+                                    setViewMode("FLOOR_PLAN");
+                                    navigate("/server");
+                                } else {
+                                    setViewMode("PROFILE");
+                                    navigate("/server/profile");
+                                }
+                            }}
+                            className={`flex items-center justify-center rounded-lg sm:rounded-xl border w-8 h-8 sm:w-9 sm:h-9 transition cursor-pointer shrink-0 shadow-xs ${
+                                viewMode === "PROFILE" && !location.pathname.endsWith("/settings")
+                                    ? "border-orange-500 bg-orange-500 text-white shadow-xs shadow-orange-500/20"
+                                    : "border-[color:var(--app-border)]/40 bg-white/60 dark:bg-slate-900/60 theme-muted hover:text-[color:var(--app-text)]"
+                            }`}
+                            title="Profile"
+                            aria-label="Server Profile"
+                        >
+                            <User className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
+                        </button>
+                    </div>
                 </div>
             </header>
 
@@ -1458,9 +1578,13 @@ export default function Server() {
                 <div className="flex-1 p-3 sm:p-4 max-w-7xl mx-auto w-full">
                     <ServerNotificationsView
                         onUnreadCountChange={setUnreadNotificationCount}
-                        onNavigateToTable={(tableNo) => {
-                            setViewMode("FLOOR_PLAN");
-                            navigate(`/server?table=${encodeURIComponent(tableNo)}`);
+                        onNavigateToTable={(tableNo, tableId) => {
+                            if (tableId) {
+                                handleViewAssignedTable(tableNo, tableId);
+                            } else {
+                                setViewMode("FLOOR_PLAN");
+                                navigate(`/server?table=${encodeURIComponent(tableNo)}`);
+                            }
                         }}
                         onBackToFloorPlan={() => {
                             setViewMode("FLOOR_PLAN");
@@ -1494,7 +1618,7 @@ export default function Server() {
                                         <h3 className="font-black text-emerald-800 dark:text-emerald-300 text-sm sm:text-base flex items-center gap-2">
                                             <span>Ready for Distribution at Kitchen Pass</span>
                                             <span className="rounded-full bg-emerald-500 text-white px-2 py-0.5 text-[10px] font-extrabold">
-                                                {readyItemsToDistribute.length} {readyItemsToDistribute.length === 1 ? "Item" : "Items"}
+                                                {readyItemsToDistribute.length} Ready Item(s)
                                             </span>
                                         </h3>
                                         <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400 font-medium">
@@ -1521,9 +1645,14 @@ export default function Server() {
                                                     <span className="inline-block text-xs font-black px-2 py-0.5 rounded-lg bg-orange-500 text-white shadow-xs">
                                                         Table {item.tableNo}
                                                     </span>
-                                                    <span className="text-[10px] font-mono text-emerald-600 font-bold ml-1.5">
-                                                        #{item.kotNo || item.orderNo}
+                                                    <span className="text-[10px] font-mono text-emerald-600 font-bold ml-1.5" title="Authoritative KOTItem ID">
+                                                        Item #{item.kotItemId || item.id}
                                                     </span>
+                                                    {(item.kotNo || item.orderNo) && (
+                                                        <span className="text-[10px] font-mono text-emerald-600 font-bold ml-1">
+                                                            #{item.kotNo || item.orderNo}
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <span className="text-[9px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
                                                     {item.stationName}
@@ -1573,6 +1702,7 @@ export default function Server() {
                             {sections.map((sec) => (
                                 <button
                                     key={sec}
+                                    type="button"
                                     onClick={() => setActiveSectionFilter(sec)}
                                     className={`rounded-lg px-2.5 sm:px-3 py-1.5 text-xs font-bold transition whitespace-nowrap ${
                                         activeSectionFilter === sec
@@ -1589,6 +1719,9 @@ export default function Server() {
                         <div className="relative w-full md:w-60 lg:w-72">
                             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 theme-muted" />
                             <input
+                                id="server-table-search"
+                                name="serverTableSearch"
+                                aria-label="Search tables, waiters, guests"
                                 type="text"
                                 placeholder="Search table #, waiter, guest..."
                                 value={searchQuery}
@@ -1642,6 +1775,7 @@ export default function Server() {
                                 return (
                                     <div
                                         key={table.id}
+                                        data-testid={`table-card-${table.id}`}
                                         onClick={() => handleSelectTableForOrder(table)}
                                         className={`group relative flex flex-col justify-between rounded-2xl border p-3 cursor-pointer transition-all duration-200 shadow-xs hover:-translate-y-0.5 min-h-[155px] sm:min-h-[165px] h-full text-xs bg-white dark:bg-slate-900 ${
                                             isBlocked
@@ -1661,7 +1795,7 @@ export default function Server() {
                                                 <h3 className="text-base sm:text-lg font-black tracking-tight text-[color:var(--app-text)]">
                                                     {table.tableNo}
                                                 </h3>
-                                                <p className="text-[10px] theme-muted">{table.seats} Seats • {table.section || "Main"}</p>
+                                                <p className="text-[10px] theme-muted">{table.seats} Seats • {table.section || "Location not configured"}</p>
                                             </div>
 
                                             {/* Status Badge */}
@@ -1910,7 +2044,7 @@ export default function Server() {
                                             <span>No server assigned</span>
                                         </span>
                                     )}
-                                    <span className="text-[11px] theme-muted">• Section: {selectedTable?.section || "Main"}</span>
+                                    <span className="text-[11px] theme-muted">• Section: {selectedTable?.section || "Location not configured"}</span>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2 flex-wrap">
@@ -1936,6 +2070,7 @@ export default function Server() {
                                     <Trash2 className="h-3 w-3" /> Free Table
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => {
                                         setSelectedTable(null);
                                         setViewMode("FLOOR_PLAN");
@@ -1997,6 +2132,7 @@ export default function Server() {
                             {["ALL", "Coffee", "Breakfast", "Burgers", "Pizza", "Salads", "Desserts"].map((cat) => (
                                 <button
                                     key={cat}
+                                    type="button"
                                     onClick={() => setActiveCategory(cat)}
                                     className={`rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap ${
                                         activeCategory === cat ? "bg-orange-500 text-white" : "theme-muted bg-black/5 dark:bg-white/5"
@@ -2014,6 +2150,7 @@ export default function Server() {
                                 .map((item) => (
                                     <button
                                         key={item.id}
+                                        type="button"
                                         onClick={() => handleAddToCart(item)}
                                         className="flex flex-col justify-between rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 text-left hover:border-orange-500 transition shadow-xs cursor-pointer active:scale-98"
                                     >
@@ -2093,7 +2230,13 @@ export default function Server() {
                                             <div className="flex items-center gap-2 shrink-0">
                                                 <span className="font-mono font-bold">x{item.qty}</span>
                                                 <span className="font-bold text-orange-500">{formatMoney(item.price * item.qty)}</span>
-                                                <button onClick={() => handleRemoveFromCart(item.id)} className="text-red-400 hover:text-red-500 p-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveFromCart(item.id)}
+                                                    className="text-red-400 hover:text-red-500 p-1"
+                                                    title={`Remove ${item.name}`}
+                                                    aria-label={`Remove ${item.name} from cart`}
+                                                >
                                                     <Trash2 className="h-3.5 w-3.5" />
                                                 </button>
                                             </div>
@@ -2111,6 +2254,7 @@ export default function Server() {
                             </div>
 
                             <button
+                                type="button"
                                 onClick={handleSendKOT}
                                 disabled={placingOrder || Object.keys(cart).length === 0}
                                 className="w-full rounded-xl bg-orange-500 py-3 text-xs font-bold text-white hover:bg-orange-600 disabled:opacity-50 transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
@@ -2142,6 +2286,7 @@ export default function Server() {
                                     View Cart
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={handleSendKOT}
                                     disabled={placingOrder}
                                     className="px-4 py-2 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 shadow-md flex items-center gap-1.5 disabled:opacity-50"
