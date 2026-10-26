@@ -3176,6 +3176,24 @@ export default async function ownerRoutes(app, deps = {}) {
         }
       }
 
+      // Invalidate existing pending unconsumed login links for this staff member upon edit
+      try {
+        await prisma.staffLoginToken.updateMany({
+          where: {
+            staffId,
+            restaurantId,
+            usedAt: null,
+          },
+          data: {
+            usedAt: new Date(),
+          },
+        });
+      } catch (tokenErr) {
+        if (!isMissingTableError(tokenErr)) {
+          console.error("Failed to invalidate old login links on staff edit:", tokenErr);
+        }
+      }
+
       if (nextRole !== staff.role) {
         await logAuditEvent({
           prisma,

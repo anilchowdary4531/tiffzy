@@ -312,8 +312,6 @@ export default function Login() {
         if (autoLoginTokenRef.current === staffLink) return;
         autoLoginTokenRef.current = staffLink;
 
-        let cancelled = false;
-
         // Clear any conflicting existing session before establishing token-authenticated session
         clearStaffSession("local");
         clearStaffSession("session");
@@ -348,7 +346,6 @@ export default function Login() {
                 setPassword("");
 
                 const res = await api.post("/auth/staff-login-link", { token: staffLink });
-                if (cancelled) return;
 
                 if (!res.data?.user || !res.data?.token) {
                     throw new Error("Invalid response from login server");
@@ -356,25 +353,22 @@ export default function Login() {
 
                 handleSuccessfulStaffLogin(res.data, { session: true });
             } catch (err) {
-                if (cancelled) return;
+                const status = err.response?.status;
                 const backendMsg = err.response?.data?.message;
-                setError(
-                    backendMsg ||
-                    "This staff login link is invalid, expired, or has already been used. Please contact your manager for a new link."
-                );
+                if (backendMsg) {
+                    setError(backendMsg);
+                } else if (status === 403) {
+                    setError("This staff account is inactive.");
+                } else {
+                    setError("Invalid staff login link.");
+                }
                 setPassword("");
             } finally {
-                if (!cancelled) {
-                    setLoading(false);
-                }
+                setLoading(false);
             }
         };
 
         consumeStaffLink();
-
-        return () => {
-            cancelled = true;
-        };
     }, [mode, staffLink]);
 
     const setModeAndUrl = (nextMode) => {

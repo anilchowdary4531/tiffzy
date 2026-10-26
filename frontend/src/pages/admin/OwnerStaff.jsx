@@ -409,6 +409,19 @@ export default function OwnerStaff() {
             await axios.patch(`${API}/owner/${restaurantId}/staff/${staffUser.id}/status`, {
                 isActive: nextStatus,
             });
+
+            // Clear login links on status change
+            setLoginLinks((prev) => {
+                const next = { ...prev };
+                delete next[staffUser.id];
+                return next;
+            });
+            setTemporaryPasswords((prev) => {
+                const next = { ...prev };
+                delete next[staffUser.id];
+                return next;
+            });
+
             showToast({
                 title: nextStatus ? "Staff Activated" : "Staff Deactivated",
                 message: `${staffUser.name} is now ${nextStatus ? "active" : "disabled"}. Active sessions have been revoked.`,
@@ -435,6 +448,18 @@ export default function OwnerStaff() {
         try {
             setDeletingFor(staffUser.id);
             await axios.delete(`${API}/owner/${restaurantId}/staff/${staffUser.id}`);
+
+            setLoginLinks((prev) => {
+                const next = { ...prev };
+                delete next[staffUser.id];
+                return next;
+            });
+            setTemporaryPasswords((prev) => {
+                const next = { ...prev };
+                delete next[staffUser.id];
+                return next;
+            });
+
             if (selectedAccessUserId === staffUser.id) {
                 setSelectedAccessUserId(null);
                 setAccessDraft({});
@@ -474,6 +499,18 @@ export default function OwnerStaff() {
         setShowEditPassword(false);
         const currentDesig = resolveDesignation(staffUser);
         const isStandard = DESIGNATION_OPTIONS.includes(currentDesig);
+
+        // Clear any stale login link or temporary password for this staff user
+        setLoginLinks((prev) => {
+            const next = { ...prev };
+            delete next[staffUser.id];
+            return next;
+        });
+        setTemporaryPasswords((prev) => {
+            const next = { ...prev };
+            delete next[staffUser.id];
+            return next;
+        });
 
         setEditDraft({
             name: String(staffUser?.name || ""),
@@ -542,6 +579,18 @@ export default function OwnerStaff() {
                 });
             }
 
+            // Invalidate/clear stale login link and temporary password for this staff member after update
+            setLoginLinks((prev) => {
+                const next = { ...prev };
+                delete next[staffUser.id];
+                return next;
+            });
+            setTemporaryPasswords((prev) => {
+                const next = { ...prev };
+                delete next[staffUser.id];
+                return next;
+            });
+
             showToast({
                 title: "Staff user updated",
                 message: `Successfully saved updates for ${name}.`,
@@ -564,6 +613,13 @@ export default function OwnerStaff() {
             await axios.put(`${API}/owner/${restaurantId}/staff/${staffUserId}/access`, {
                 access: accessDraft,
             });
+
+            setLoginLinks((prev) => {
+                const next = { ...prev };
+                delete next[staffUserId];
+                return next;
+            });
+
             showToast({
                 title: "Permissions Saved",
                 message: "Updated module access permissions successfully.",
