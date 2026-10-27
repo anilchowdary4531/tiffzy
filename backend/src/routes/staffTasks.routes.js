@@ -2,6 +2,8 @@ import { requireStaffJwt } from "../services/staffAuthService.js";
 import { logAuditEvent } from "../services/auditLogService.js";
 import { completeSessionAndReleaseTable } from "../services/tableSessionService.js";
 import { syncParentOrderStatusFromKots, getCanonicalReadyItems } from "../services/kotService.js";
+import { createAndDispatchNotification } from "../services/notificationService.js";
+import { NOTIFICATION_TYPES, RECIPIENT_TYPES } from "../constants/notificationTypes.js";
 
 export default async function staffTaskRoutes(app, deps = {}) {
   const { prisma, realtime, STAFF_ALLOWED_ROLES } = deps || {};
@@ -535,6 +537,37 @@ export default async function staffTaskRoutes(app, deps = {}) {
             io.to(`restaurant_${rid}`).emit("table:updated", { restaurantId: rid, tableNo: updatedItem.kot.tableNo });
             io.to(`restaurant:${rid}`).emit("table:updated", { restaurantId: rid, tableNo: updatedItem.kot.tableNo });
           }
+        }
+
+        // Phase 2.C: Dispatch persistent server delivery notification
+        try {
+          const waiterId = Number(updatedItem.kot?.waiterId || req.staffActor?.userId || 0);
+          if (waiterId && rid) {
+            const tableLabel = updatedItem.kot?.tableNo ? `Table ${updatedItem.kot.tableNo}` : "Takeaway";
+            await createAndDispatchNotification({
+              prisma,
+              realtime: { io, staff },
+              recipientType: RECIPIENT_TYPES.USER,
+              recipientId: waiterId,
+              orderId: updatedItem.kot?.orderId ? Number(updatedItem.kot.orderId) : null,
+              restaurantId: rid,
+              notificationType: NOTIFICATION_TYPES.ORDER_DELIVERED,
+              title: `Food Delivered — ${tableLabel}`,
+              message: `${updatedItem.itemName || "Food item"} delivered to ${tableLabel}.`,
+              idempotencyKey: `food_served_${rid}_${itemId}_${waiterId}_SERVED`,
+              data: {
+                restaurantId: rid,
+                orderId: updatedItem.kot?.orderId ? Number(updatedItem.kot.orderId) : null,
+                kotId: Number(kId),
+                kotItemId: Number(itemId),
+                tableSessionId: updatedItem.kot?.tableSessionId ? Number(updatedItem.kot.tableSessionId) : null,
+                tableNo: updatedItem.kot?.tableNo || null,
+                recipientId: waiterId,
+              },
+            }).catch((e) => console.warn("[staffTasks] Food delivered notification error:", e?.message));
+          }
+        } catch (notifErr) {
+          console.warn("[staffTasks] Failed to dispatch food delivered notification:", notifErr?.message);
         }
       }
 

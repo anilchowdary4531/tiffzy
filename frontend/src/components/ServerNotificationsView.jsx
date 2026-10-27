@@ -246,13 +246,13 @@ export default function ServerNotificationsView({
             if (filterType === "UNREAD" && !isUnread) return false;
 
             if (filterType === "ORDERS") {
-                if (!typeUpper.includes("ORDER")) return false;
+                if (!typeUpper.includes("ORDER") || typeUpper.includes("DELIVERED")) return false;
             } else if (filterType === "KITCHEN") {
                 if (!typeUpper.includes("KOT") && !typeUpper.includes("KITCHEN") && !typeUpper.includes("FOOD") && !typeUpper.includes("PASS") && !typeUpper.includes("READY")) return false;
             } else if (filterType === "SUCCESS") {
                 if (!typeUpper.includes("SUCCESS") && !typeUpper.includes("PAYMENT") && !typeUpper.includes("DELIVERED") && !typeUpper.includes("ACCEPTED")) return false;
             } else if (filterType === "INFO") {
-                if (typeUpper.includes("ORDER") || typeUpper.includes("KOT") || typeUpper.includes("KITCHEN") || typeUpper.includes("SUCCESS")) return false;
+                if (typeUpper.includes("ORDER") || typeUpper.includes("KOT") || typeUpper.includes("KITCHEN") || typeUpper.includes("SUCCESS") || typeUpper.includes("DELIVERED")) return false;
             }
 
             // Search Query
@@ -391,8 +391,8 @@ export default function ServerNotificationsView({
                         const isUnread = !item.isRead && !item.read;
                         const typeUpper = String(item.notificationType || item.type || "INFO").toUpperCase();
                         const isKitchen = typeUpper.includes("KOT") || typeUpper.includes("KITCHEN") || typeUpper.includes("FOOD") || typeUpper.includes("PASS") || typeUpper.includes("READY");
-                        const isOrder = typeUpper.includes("ORDER");
-                        const isSuccess = typeUpper.includes("SUCCESS") || typeUpper.includes("PAYMENT") || typeUpper.includes("DELIVERED");
+                        const isSuccess = typeUpper.includes("SUCCESS") || typeUpper.includes("PAYMENT") || typeUpper.includes("DELIVERED") || typeUpper.includes("ACCEPTED");
+                        const isOrder = typeUpper.includes("ORDER") && !isSuccess;
 
                         const tableNo = item.data?.tableNo || item.data?.table_number || item.metadata?.tableNo || item.data?.table;
 
@@ -414,12 +414,12 @@ export default function ServerNotificationsView({
                                         </h4>
                                         <span
                                             className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                                                isOrder
-                                                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                                                isSuccess
+                                                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                                                     : isKitchen
                                                     ? "bg-sky-500/15 text-sky-600 dark:text-sky-400"
-                                                    : isSuccess
-                                                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                                                    : isOrder
+                                                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
                                                     : "bg-orange-500/15 text-orange-600 dark:text-orange-400"
                                             }`}
                                         >

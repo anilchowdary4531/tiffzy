@@ -478,6 +478,111 @@ describe("ServerNotificationsView Unit Tests", () => {
         });
     });
 
+    it("notification:new suppresses duplicate notifications with the same id and maintains unread count", async () => {
+        const onCountChange = vi.fn();
+        renderWithProviders(<ServerNotificationsView onUnreadCountChange={onCountChange} />);
+
+        await waitFor(() => {
+            expect(screen.getByText("Food Ready at Pass")).toBeInTheDocument();
+        });
+
+        const newNotifCall = mockSocket.on.mock.calls.find(([event]) => event === "notification:new");
+        const handleNewNotification = newNotifCall[1];
+
+        // Emit notification with ID 500 once
+        act(() => {
+            handleNewNotification({
+                id: 500,
+                title: "Food Ready — Table 7",
+                message: "Paneer Tikka is ready for Table 7",
+                notificationType: "FOOD_READY",
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                data: { tableNo: "7" },
+            });
+        });
+
+        expect(screen.getAllByText("Food Ready — Table 7").length).toBe(1);
+        expect(onCountChange).toHaveBeenLastCalledWith(2);
+
+        // Emit identical notification ID 500 again
+        act(() => {
+            handleNewNotification({
+                id: 500,
+                title: "Food Ready — Table 7",
+                message: "Paneer Tikka is ready for Table 7",
+                notificationType: "FOOD_READY",
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                data: { tableNo: "7" },
+            });
+        });
+
+        // Remains exactly 1, count not incremented again
+        expect(screen.getAllByText("Food Ready — Table 7").length).toBe(1);
+        expect(onCountChange).toHaveBeenLastCalledWith(2);
+    });
+
+    it("correctly categorizes canonical lifecycle events: ORDER_PLACED under ORDERS, FOOD_READY under KITCHEN, ORDER_DELIVERED under SUCCESS", async () => {
+        renderWithProviders(<ServerNotificationsView onBackToFloorPlan={vi.fn()} />);
+
+        await waitFor(() => {
+            expect(screen.getByText("Food Ready at Pass")).toBeInTheDocument();
+        });
+
+        const newNotifCall = mockSocket.on.mock.calls.find(([event]) => event === "notification:new");
+        const handleNewNotification = newNotifCall[1];
+
+        act(() => {
+            handleNewNotification({
+                id: 701,
+                title: "Order Sent to Kitchen",
+                message: "Order #1001 sent to kitchen for Table 5.",
+                notificationType: "ORDER_PLACED",
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                data: { tableNo: "5" },
+            });
+            handleNewNotification({
+                id: 702,
+                title: "Food Ready — Table 5",
+                message: "Dal Makhani is ready for Table 5.",
+                notificationType: "FOOD_READY",
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                data: { tableNo: "5" },
+            });
+            handleNewNotification({
+                id: 703,
+                title: "Food Delivered — Table 5",
+                message: "Dal Makhani delivered to Table 5.",
+                notificationType: "ORDER_DELIVERED",
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                data: { tableNo: "5" },
+            });
+        });
+
+        // Check ORDERS category tab
+        const ordersTab = screen.getByRole("button", { name: "ORDERS" });
+        fireEvent.click(ordersTab);
+        expect(screen.getByText("Order Sent to Kitchen")).toBeInTheDocument();
+        expect(screen.queryByText("Food Ready — Table 5")).not.toBeInTheDocument();
+        expect(screen.queryByText("Food Delivered — Table 5")).not.toBeInTheDocument();
+
+        // Check KITCHEN category tab
+        const kitchenTab = screen.getByRole("button", { name: "KITCHEN" });
+        fireEvent.click(kitchenTab);
+        expect(screen.getByText("Food Ready — Table 5")).toBeInTheDocument();
+        expect(screen.queryByText("Order Sent to Kitchen")).not.toBeInTheDocument();
+
+        // Check SUCCESS category tab
+        const successTab = screen.getByRole("button", { name: "SUCCESS" });
+        fireEvent.click(successTab);
+        expect(screen.getByText("Food Delivered — Table 5")).toBeInTheDocument();
+        expect(screen.queryByText("Order Sent to Kitchen")).not.toBeInTheDocument();
+    });
+
     it("unmount removes all 6 registered socket listeners", async () => {
         const { unmount } = renderWithProviders(<ServerNotificationsView onBackToFloorPlan={vi.fn()} />);
 

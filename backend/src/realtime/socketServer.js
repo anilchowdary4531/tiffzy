@@ -340,7 +340,7 @@ export const initRealtime = ({ app, prisma, allowedOrigins = [], isOriginAllowed
 
       await createAndDispatchNotification({
         prisma,
-        realtime: { io },
+        realtime: { io, staff },
         recipientType: RECIPIENT_TYPES.RESTAURANT,
         recipientId: rid,
         restaurantId: rid,
@@ -351,6 +351,39 @@ export const initRealtime = ({ app, prisma, allowedOrigins = [], isOriginAllowed
         data: { orderId: order.id, orderNo: order.orderNo, total: order.total, tableNo: order.tableNo },
         idempotencyKey: `staff_order_rest_${order.id}`,
       }).catch((e) => console.log("Staff order notification dispatch error:", e?.message));
+
+      const responsibleServerId =
+        order.kots?.[0]?.waiterId ||
+        order.waiterId ||
+        order.assignedWaiterId ||
+        order.createdByUserId ||
+        null;
+
+      if (responsibleServerId) {
+        const tableLabel = order.tableNo ? `Table ${order.tableNo}` : "Takeaway";
+        const orderNum = order.orderNo || order.id;
+        await createAndDispatchNotification({
+          prisma,
+          realtime: { io, staff },
+          recipientType: RECIPIENT_TYPES.USER,
+          recipientId: Number(responsibleServerId),
+          orderId: order.id,
+          restaurantId: rid,
+          notificationType: NOTIFICATION_TYPES.ORDER_PLACED,
+          title: "Order Sent to Kitchen",
+          message: `Order #${orderNum} sent to kitchen for ${tableLabel}.`,
+          idempotencyKey: `order_sent_${rid}_${order.id}_${responsibleServerId}`,
+          data: {
+            restaurantId: rid,
+            orderId: order.id,
+            orderNo: order.orderNo,
+            tableId: order.tableId ? Number(order.tableId) : null,
+            tableSessionId: order.tableSessionId ? Number(order.tableSessionId) : null,
+            tableNo: order.tableNo || null,
+            recipientId: Number(responsibleServerId),
+          },
+        }).catch((e) => console.log("Responsible server order notification error:", e?.message));
+      }
     } catch (notifErr) {
       console.log("Order notification dispatch error:", notifErr?.message);
     }

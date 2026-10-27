@@ -85,6 +85,8 @@ import { assignWaiterToTable, unassignWaiterFromTable, getWaiterAssignmentHistor
 import { getAuditLogs, logAuditEvent } from "../services/auditLogService.js";
 import { approveCancellation, approveDiscount, approveReprint } from "../controllers/managerApprovalController.js";
 import { completeSessionAndReleaseTable } from "../services/tableSessionService.js";
+import { createAndDispatchNotification } from "../services/notificationService.js";
+import { NOTIFICATION_TYPES, RECIPIENT_TYPES } from "../constants/notificationTypes.js";
 
 export default async function ownerRoutes(app, deps = {}) {
   const prisma = deps?.prisma || defaultPrisma;
@@ -428,6 +430,7 @@ export default async function ownerRoutes(app, deps = {}) {
       // Broadcast Socket.IO events for real-time updates across screens
       try {
         const io = req.server?.io || realtime?.io;
+        const staff = req.server?.staff || realtime?.staff;
         if (io) {
           io.to(`restaurant_${restaurantId}`).emit("new_order", order);
           io.to(`restaurant:${restaurantId}`).emit("new_order", order);
@@ -438,6 +441,42 @@ export default async function ownerRoutes(app, deps = {}) {
             io.to(`restaurant:${restaurantId}`).emit("table:updated", { restaurantId, tableNo: order.tableNo });
             io.to(`restaurant_${restaurantId}`).emit("table:session_updated", { restaurantId, tableNo: order.tableNo });
           }
+        }
+
+        // Phase 2.A: Create and dispatch persistent notification for the responsible Server / Waiter
+        const responsibleServerId =
+          order.kots?.[0]?.waiterId ||
+          req.body?.waiterId ||
+          req.body?.assignedWaiterId ||
+          actor?.userId ||
+          null;
+
+        if (responsibleServerId) {
+          const tableLabel = order.tableNo ? `Table ${order.tableNo}` : "Takeaway";
+          const orderNum = order.orderNo || order.id;
+          await createAndDispatchNotification({
+            prisma,
+            realtime: { io, staff },
+            recipientType: RECIPIENT_TYPES.USER,
+            recipientId: Number(responsibleServerId),
+            orderId: order.id,
+            restaurantId,
+            notificationType: NOTIFICATION_TYPES.ORDER_PLACED,
+            title: "Order Sent to Kitchen",
+            message: `Order #${orderNum} sent to kitchen for ${tableLabel}.`,
+            idempotencyKey: `order_sent_${restaurantId}_${order.id}_${responsibleServerId}`,
+            data: {
+              restaurantId,
+              orderId: order.id,
+              orderNo: order.orderNo,
+              tableId: order.tableId ? Number(order.tableId) : null,
+              tableSessionId: order.tableSessionId ? Number(order.tableSessionId) : null,
+              tableNo: order.tableNo || null,
+              recipientId: Number(responsibleServerId),
+            },
+          }).catch((notifErr) => {
+            console.warn("[owner:orders] Failed to create order sent notification:", notifErr?.message);
+          });
         }
       } catch (e) {
         console.warn("Socket broadcast error on order creation:", e?.message);

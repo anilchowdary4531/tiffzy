@@ -157,11 +157,28 @@ export default async function notificationRoutes(app, deps) {
     if (actor.recipientType === RECIPIENT_TYPES.USER && actor.restaurantId) {
       count = await prisma.notification.count({
         where: {
+          restaurantId: Number(actor.restaurantId),
           OR: [
-            { recipientType: RECIPIENT_TYPES.USER, recipientId: actor.recipientId },
-            { recipientType: RECIPIENT_TYPES.RESTAURANT, recipientId: actor.restaurantId },
-            { restaurantId: actor.restaurantId },
+            { recipientType: RECIPIENT_TYPES.USER, recipientId: Number(actor.recipientId) },
+            { recipientType: RECIPIENT_TYPES.RESTAURANT, recipientId: Number(actor.restaurantId) },
           ],
+          isRead: false,
+        },
+      });
+    } else if (actor.recipientType === RECIPIENT_TYPES.USER) {
+      count = await prisma.notification.count({
+        where: {
+          recipientType: RECIPIENT_TYPES.USER,
+          recipientId: Number(actor.recipientId),
+          isRead: false,
+        },
+      });
+    } else if (actor.recipientType === RECIPIENT_TYPES.RESTAURANT) {
+      const rid = Number(actor.restaurantId || actor.recipientId);
+      count = await prisma.notification.count({
+        where: {
+          recipientType: RECIPIENT_TYPES.RESTAURANT,
+          recipientId: rid,
           isRead: false,
         },
       });
