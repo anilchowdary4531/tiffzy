@@ -610,46 +610,29 @@ export default function Server() {
                 const readyItemsInKot = rawItems.filter((it) => String(it.status || "").toUpperCase() === "READY");
                 const itemsToInclude = isKotReady ? (readyItemsInKot.length > 0 ? readyItemsInKot : rawItems) : readyItemsInKot;
 
-                itemsToInclude.forEach((it) => {
-                    const itemId = Number(it.id);
-                    if (itemId && (seenItemIds.has(itemId) || realtimeRemovedItemIds.has(itemId))) return;
-                    if (itemId) seenItemIds.add(itemId);
-
+                if (isKotReady || readyItemsInKot.length > 0) {
                     list.push({
-                        key: `ready-kotitem-${itemId || `synth-${kot.id}-${it.itemName}`}`,
-                        id: itemId || kot.id,
-                        kotItemId: itemId || null,
-                        orderItemId: it.orderItemId || null,
-                        orderId: kot.orderId,
+                        key: `ready-kot-${kot.id}`,
+                        id: kot.id,
                         kotId: kot.id,
-                        restaurantId: kot.restaurantId || restaurantId,
-                        type: "KOT_ITEM",
+                        orderId: kot.orderId,
+                        type: "KOT",
                         kotNo: kot.kotNo || "",
                         orderNo: kot.order?.orderNo || "",
                         tableNo: String(kot.tableNo || kot.order?.tableNo || "N/A").trim(),
                         waiterName: kot.waiterName || kot.order?.customerName || null,
                         stationName: kot.stationName || "Kitchen",
-                        readyAt: it.readyAt || kot.updatedAt || kot.createdAt,
-                        name: it.itemName || it.name,
-                        itemName: it.itemName || it.name,
-                        qty: it.qty || it.quantity || 1,
-                        variantName: it.variantName || null,
-                        notes: it.notes || null,
-                        preparedByName: it.preparedByName || null,
-                        status: "READY",
-                        itemsList: [
-                            {
-                                id: itemId || kot.id,
-                                orderItemId: it.orderItemId,
-                                name: it.itemName || it.name,
-                                itemName: it.itemName || it.name,
-                                qty: it.qty || it.quantity || 1,
-                                notes: it.notes,
-                                status: "READY",
-                            },
-                        ],
+                        readyAt: kot.updatedAt || kot.createdAt,
+                        itemsList: itemsToInclude.map((it) => ({
+                            id: it.id,
+                            name: it.itemName || it.name,
+                            itemName: it.itemName || it.name,
+                            qty: it.qty || it.quantity || 1,
+                            notes: it.notes,
+                            status: "READY",
+                        })),
                     });
-                });
+                }
             });
         }
 
@@ -1072,6 +1055,10 @@ export default function Server() {
                     status: "DELIVERED",
                     changedByName: user?.name || "Server",
                 });
+            } else if (item.type === "KOT") {
+                await api.put(`/owner/${restaurantId}/kots/${item.id}/status`, {
+                    status: "SERVED",
+                });
             } else {
                 // Authoritative KOTItem delivery
                 try {
@@ -1079,10 +1066,6 @@ export default function Server() {
                 } catch (runnerErr) {
                     if (item.kotId) {
                         await api.put(`/owner/${restaurantId}/kitchen/items/${itemId}/status`, {
-                            status: "SERVED",
-                        });
-                    } else if (item.type === "KOT") {
-                        await api.put(`/owner/${restaurantId}/kots/${item.id}/status`, {
                             status: "SERVED",
                         });
                     } else {
