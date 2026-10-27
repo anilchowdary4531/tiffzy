@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
     X,
@@ -44,6 +44,7 @@ export default function StaffDirectoryDrawer({ isOpen, onClose, restaurantId, on
     const [generatingTempPasswordFor, setGeneratingTempPasswordFor] = useState(null);
     const [loginLinks, setLoginLinks] = useState({});
     const [generatingLoginLinkFor, setGeneratingLoginLinkFor] = useState(null);
+    const isGeneratingLoginLinkRef = useRef(false);
     const [copiedLoginLinkId, setCopiedLoginLinkId] = useState(null);
     const [addForm, setAddForm] = useState({
         name: "",
@@ -68,9 +69,11 @@ export default function StaffDirectoryDrawer({ isOpen, onClose, restaurantId, on
     };
 
     const handleGenerateStaffLoginLink = async (u) => {
+        if (!u?.id || isGeneratingLoginLinkRef.current) return;
+        isGeneratingLoginLinkRef.current = true;
         try {
             setGeneratingLoginLinkFor(u.id);
-            const res = await axios.post(`${API}/owner/${effectiveRestaurantId}/staff/${u.id}/login-link`);
+            const res = await axios.post(`${API}/owner/${effectiveRestaurantId}/staff/${u.id}/login-link`, {});
             const { loginUrl, token, expiresAt } = res.data;
             const link = loginUrl || `${window.location.origin}/login?mode=staff&token=${token}`;
             setLoginLinks((prev) => ({
@@ -96,6 +99,7 @@ export default function StaffDirectoryDrawer({ isOpen, onClose, restaurantId, on
             showToast(msg, "error");
         } finally {
             setGeneratingLoginLinkFor(null);
+            isGeneratingLoginLinkRef.current = false;
         }
     };
 
@@ -593,7 +597,20 @@ export default function StaffDirectoryDrawer({ isOpen, onClose, restaurantId, on
                     staffUser={editingStaff}
                     restaurantId={effectiveRestaurantId}
                     onSaved={async () => {
+                        const savedId = editingStaff?.id;
                         setEditingStaff(null);
+                        if (savedId) {
+                            setLoginLinks((prev) => {
+                                const next = { ...prev };
+                                delete next[savedId];
+                                return next;
+                            });
+                            setTemporaryPasswords((prev) => {
+                                const next = { ...prev };
+                                delete next[savedId];
+                                return next;
+                            });
+                        }
                         await loadStaff();
                     }}
                 />

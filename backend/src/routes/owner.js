@@ -3178,6 +3178,7 @@ export default async function ownerRoutes(app, deps = {}) {
 
       // Invalidate existing pending unconsumed login links for this staff member upon edit
       try {
+        console.log(`[STAFF_LOGIN_DIAG] STAFF_EDIT_PUT: invalidating old tokens for staffId=${staffId} restaurantId=${restaurantId}`);
         await prisma.staffLoginToken.updateMany({
           where: {
             staffId,
@@ -3393,6 +3394,8 @@ export default async function ownerRoutes(app, deps = {}) {
       if (staff.isActive === false) {
         return reply.code(400).send({ message: "Cannot generate login link for disabled staff member" });
       }
+
+      console.log(`[STAFF_LOGIN_DIAG] GENERATE_ENDPOINT_CALLED: staffId=${staffId} restaurantId=${restaurantId}`);
 
       const linkResult = await generateStaffLoginToken({
         prisma,

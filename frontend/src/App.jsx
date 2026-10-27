@@ -572,6 +572,14 @@ export default function App() {
                         }
                     />
                     <Route
+                        path="/staff/settings"
+                        element={
+                            <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CHEF", "CASHIER", "STEWARD", "CLEANER", "SWIPER", "STAFF"]}>
+                                <StaffProfileView title="Staff Settings" />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
                         path="/staff/notifications"
                         element={
                             <ProtectedRoute roles={["SUPER_ADMIN", "OWNER", "MANAGER", "WAITER", "CHEF", "CASHIER", "STEWARD", "CLEANER", "SWIPER", "STAFF"]}>

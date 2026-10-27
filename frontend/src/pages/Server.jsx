@@ -1566,7 +1566,7 @@ export default function Server() {
 
             {/* Main Content Body */}
             {viewMode === "PROFILE" ? (
-                <div className="flex-1 p-3 sm:p-4 max-w-7xl mx-auto w-full">
+                <div className="flex-1 p-3 sm:p-4 w-full max-w-none">
                     <ServerProfileView
                         onBackToFloorPlan={() => {
                             setViewMode("FLOOR_PLAN");
@@ -1575,7 +1575,7 @@ export default function Server() {
                     />
                 </div>
             ) : viewMode === "NOTIFICATIONS" ? (
-                <div className="flex-1 p-3 sm:p-4 max-w-7xl mx-auto w-full">
+                <div className="flex-1 p-3 sm:p-4 w-full max-w-none">
                     <ServerNotificationsView
                         onUnreadCountChange={setUnreadNotificationCount}
                         onNavigateToTable={(tableNo, tableId) => {
@@ -1593,7 +1593,7 @@ export default function Server() {
                     />
                 </div>
             ) : viewMode === "HISTORY" ? (
-                <div className="flex-1 p-3 sm:p-4 max-w-7xl mx-auto w-full">
+                <div className="flex-1 p-3 sm:p-4 w-full max-w-none">
                     <ServerHistoryView
                         onBackToFloorPlan={() => {
                             setViewMode("FLOOR_PLAN");
@@ -1602,7 +1602,7 @@ export default function Server() {
                     />
                 </div>
             ) : viewMode === "FLOOR_PLAN" ? (
-                <div className="flex-1 p-3 sm:p-4 space-y-3 sm:space-y-4 max-w-7xl mx-auto w-full">
+                <div className="flex-1 p-3 sm:p-4 space-y-3 sm:space-y-4 w-full max-w-none">
                     {/* Ready to Distribute Notification Banner & Grid */}
                     {readyItemsToDistribute.length > 0 && (
                         <div

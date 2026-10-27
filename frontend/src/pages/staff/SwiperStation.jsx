@@ -191,42 +191,42 @@ export default function SwiperStation() {
                         fetchUnpaidTables();
                     }}
                     disabled={refreshing}
-                    className="p-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition min-h-[44px] min-w-[44px] flex items-center justify-center border border-neutral-700/60"
+                    className="p-2.5 rounded-xl bg-white hover:bg-[#FFF7ED] text-[#171717] transition min-h-[40px] min-w-[40px] flex items-center justify-center border border-[#E7E5E4]"
                     title="Refresh data"
                 >
                     <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
                 </button>
             }
         >
-            <div className="max-w-4xl mx-auto space-y-6">
+            <div className="w-full max-w-none space-y-4">
                 {/* Search & Header */}
-                <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 shadow-md space-y-3">
+                <div className="bg-white border border-[#E7E5E4] rounded-xl p-4 shadow-xs space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
-                            <Smartphone className="w-5 h-5 text-orange-400" />
-                            <h2 className="text-base font-bold text-white">
+                            <Smartphone className="w-5 h-5 text-[#EA580C]" />
+                            <h2 className="text-base font-bold text-[#171717]">
                                 Tables Awaiting Settlement ({orders.length})
                             </h2>
                         </div>
                         <div className="relative w-full sm:w-64">
-                            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#78716C]" />
                             <input
                                 type="text"
                                 placeholder="Search table # or bill..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-orange-500 min-h-[40px]"
+                                className="w-full bg-white border border-[#E7E5E4] rounded-xl pl-9 pr-3 py-2 text-xs text-[#171717] placeholder-[#78716C] focus:outline-hidden focus:border-[#F97316] min-h-[40px]"
                             />
                         </div>
                     </div>
 
                     {/* Table Selection Cards */}
                     {loading ? (
-                        <div className="py-8 text-center text-xs text-neutral-400">Loading tables...</div>
+                        <div className="py-8 text-center text-xs text-[#78716C]">Loading tables...</div>
                     ) : filteredOrders.length === 0 ? (
-                        <div className="py-8 text-center bg-neutral-950/60 rounded-xl border border-neutral-800/80">
-                            <CheckCircle2 className="w-8 h-8 text-emerald-500/40 mx-auto mb-1" />
-                            <p className="text-xs text-neutral-400">No tables waiting for tableside payment.</p>
+                        <div className="py-8 text-center bg-[#FFF7ED]/50 rounded-xl border border-[#E7E5E4]">
+                            <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-1 opacity-80" />
+                            <p className="text-xs text-[#57534E]">No tables waiting for tableside payment.</p>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 min-[340px]:grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -239,13 +239,13 @@ export default function SwiperStation() {
                                         onClick={() => setSelectedOrder(o)}
                                         className={`p-3 rounded-xl border text-left transition min-h-[76px] ${
                                             isSelected
-                                                ? "bg-orange-600 text-white border-orange-500 shadow-md"
-                                                : "bg-neutral-950 text-neutral-300 border-neutral-800 hover:border-neutral-700"
+                                                ? "bg-[#F97316] text-white border-[#EA580C] shadow-xs"
+                                                : "bg-white text-[#171717] border-[#E7E5E4] hover:border-stone-300 hover:bg-stone-50/50"
                                         }`}
                                     >
                                         <div className="flex items-center justify-between">
                                             <span className={`px-2 py-0.5 rounded-md text-[11px] font-extrabold ${
-                                                isSelected ? "bg-white text-orange-600" : "bg-neutral-800 text-orange-400"
+                                                isSelected ? "bg-white text-[#EA580C]" : "bg-stone-100 text-[#EA580C] border border-[#E7E5E4]"
                                             }`}>
                                                 Table {o.tableNo}
                                             </span>
@@ -265,44 +265,44 @@ export default function SwiperStation() {
 
                 {/* Selected Table Checkout Form */}
                 {selectedOrder ? (
-                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-xl space-y-6">
-                        <div className="flex items-center justify-between border-b border-neutral-800 pb-4">
+                    <div className="bg-white border border-[#E7E5E4] rounded-xl p-6 shadow-xs space-y-6">
+                        <div className="flex items-center justify-between border-b border-[#E7E5E4] pb-4">
                             <div>
                                 <div className="flex items-center gap-2">
-                                    <span className="px-3 py-1 rounded-xl bg-orange-600 text-white font-extrabold text-sm">
+                                    <span className="px-3 py-1 rounded-xl bg-[#F97316] text-white font-extrabold text-sm">
                                         Table {selectedOrder.tableNo}
                                     </span>
-                                    <h3 className="font-bold text-white text-lg">
+                                    <h3 className="font-bold text-[#171717] text-lg">
                                         Bill #{selectedOrder.orderNo || selectedOrder.id}
                                     </h3>
                                 </div>
-                                <div className="text-xs text-neutral-400 mt-1">
+                                <div className="text-xs text-[#57534E] mt-1">
                                     Guest: {selectedOrder.customer?.name || "Walk-in Guest"}
                                 </div>
                             </div>
                             <div className="text-right">
-                                <div className="text-xs text-neutral-400">Total Due</div>
-                                <div className="text-2xl font-black text-orange-400">
+                                <div className="text-xs text-[#57534E]">Total Due</div>
+                                <div className="text-2xl font-black text-[#EA580C]">
                                     ₹{getAuthoritativeTotal(selectedOrder)}
                                 </div>
                             </div>
                         </div>
 
                         {/* Ordered items preview */}
-                        <div className="bg-neutral-950 rounded-xl p-4 border border-neutral-800 max-h-40 overflow-y-auto divide-y divide-neutral-900">
+                        <div className="bg-stone-50 rounded-xl p-4 border border-[#E7E5E4] max-h-40 overflow-y-auto divide-y divide-[#E7E5E4]">
                             {(selectedOrder.items || []).map((item, idx) => (
                                 <div key={idx} className="py-1.5 flex items-center justify-between text-xs">
-                                    <span className="text-neutral-300">
+                                    <span className="text-[#57534E]">
                                         {item.quantity}x {item.name || item.itemName}
                                     </span>
-                                    <span className="font-semibold text-white">₹{item.price * item.quantity}</span>
+                                    <span className="font-semibold text-[#171717]">₹{item.price * item.quantity}</span>
                                 </div>
                             ))}
                         </div>
 
                         {/* EDC / Device Method Picker */}
                         <div className="space-y-3">
-                            <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
+                            <label className="text-xs font-bold text-[#57534E] uppercase tracking-wider">
                                 Payment Method Collected on Handheld
                             </label>
                             <div className="grid grid-cols-1 min-[360px]:grid-cols-3 gap-2.5">
@@ -320,8 +320,8 @@ export default function SwiperStation() {
                                             onClick={() => setPaymentMethod(m.id)}
                                             className={`p-3.5 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition min-h-[64px] ${
                                                 isSelected
-                                                    ? "bg-orange-600 text-white border-orange-500 shadow-md"
-                                                    : "bg-neutral-950 text-neutral-300 border-neutral-800 hover:border-neutral-700"
+                                                    ? "bg-[#F97316] text-white border-[#EA580C] shadow-xs"
+                                                    : "bg-white text-[#171717] border-[#E7E5E4] hover:bg-[#FFF7ED]"
                                             }`}
                                         >
                                             <Icon className="w-5 h-5" />
@@ -337,7 +337,7 @@ export default function SwiperStation() {
                             type="button"
                             onClick={handleConfirmTablesidePayment}
                             disabled={processing}
-                            className="w-full py-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-base transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 min-h-[52px] disabled:opacity-50"
+                            className="w-full py-4 rounded-xl bg-[#059669] hover:bg-emerald-700 text-white font-extrabold text-base transition flex items-center justify-center gap-2 shadow-xs min-h-[50px] disabled:opacity-50"
                         >
                             <CheckCircle2 className="w-5 h-5" />
                             <span>
@@ -348,10 +348,10 @@ export default function SwiperStation() {
                         </button>
                     </div>
                 ) : (
-                    <div className="p-12 text-center bg-neutral-900/40 border border-neutral-800 rounded-2xl">
-                        <CreditCard className="w-12 h-12 text-neutral-600 mx-auto mb-3" />
-                        <h3 className="text-base font-bold text-neutral-200">Select a Table</h3>
-                        <p className="text-xs text-neutral-400 mt-1">
+                    <div className="p-12 text-center bg-white border border-[#E7E5E4] rounded-xl shadow-xs">
+                        <CreditCard className="w-12 h-12 text-[#78716C] mx-auto mb-3" />
+                        <h3 className="text-base font-bold text-[#171717]">Select a Table</h3>
+                        <p className="text-xs text-[#57534E] mt-1">
                             Choose an unpaid table above when bringing the card machine or QR scanner to the guest.
                         </p>
                     </div>

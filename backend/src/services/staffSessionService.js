@@ -286,6 +286,8 @@ export const generateStaffLoginToken = async ({
   const path = `/login?mode=staff&token=${rawToken}`;
   const loginUrl = base ? `${base}${path}` : path;
 
+  console.log(`[STAFF_LOGIN_DIAG] GENERATE: userId=${staffId} restaurantId=${restaurantId} tokenHash=${tokenHash.substring(0, 10)}... expiresAt=${expiresAt.toISOString()} usedAt=null`);
+
   return {
     rawToken,
     loginUrl,
@@ -303,7 +305,10 @@ export const generateStaffLoginToken = async ({
 export const resolveStaffRedirectPath = (effectiveRole) => {
   const role = String(effectiveRole || "").toUpperCase();
   if (role === "CHEF") return "/kitchen";
-  if (role === "CASHIER") return "/owner/orders";
+  if (role === "CASHIER") return "/staff/cashier";
+  if (role === "STEWARD") return "/staff/steward";
+  if (role === "CLEANER") return "/staff/cleaner";
+  if (role === "SWIPER") return "/staff/swiper";
   if (["OWNER", "MANAGER", "SUPER_ADMIN"].includes(role)) return "/owner/staff";
   return "/server";
 };
@@ -323,6 +328,7 @@ export const consumeStaffLoginToken = async ({
   }
 
   const tokenHash = hashStaffLoginToken(rawToken);
+  console.log(`[STAFF_LOGIN_DIAG] CONSUME_ATTEMPT: tokenHash=${tokenHash.substring(0, 10)}... rawTokenLength=${rawToken.length}`);
   let tokenRecord;
   try {
     tokenRecord = await prisma.staffLoginToken.findUnique({
@@ -354,6 +360,8 @@ export const consumeStaffLoginToken = async ({
       throw err;
     }
   }
+
+  console.log(`[STAFF_LOGIN_DIAG] TOKEN_LOOKUP: tokenHash=${tokenHash.substring(0, 10)}... found=${Boolean(tokenRecord)} usedAt=${tokenRecord?.usedAt} expiresAt=${tokenRecord?.expiresAt}`);
 
   if (!tokenRecord || tokenRecord.purpose !== STAFF_LOGIN_PURPOSE) {
     const err = new Error("Invalid staff login link.");
@@ -407,6 +415,8 @@ export const consumeStaffLoginToken = async ({
       usedAt: new Date(),
     },
   });
+
+  console.log(`[STAFF_LOGIN_DIAG] ATOMIC_CONSUME: tokenHash=${tokenHash.substring(0, 10)}... rowsUpdated=${updateResult.count}`);
 
   if (updateResult.count === 0) {
     const rechecked = await prisma.staffLoginToken.findUnique({

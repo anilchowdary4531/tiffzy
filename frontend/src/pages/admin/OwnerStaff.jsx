@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "../../context/AuthContext";
@@ -207,6 +207,7 @@ export default function OwnerStaff() {
     const [showCardPassword, setShowCardPassword] = useState({});
     const [loginLinks, setLoginLinks] = useState({});
     const [generatingLoginLinkFor, setGeneratingLoginLinkFor] = useState(null);
+    const isGeneratingLoginLinkRef = useRef(false);
     const [copiedLoginLinkId, setCopiedLoginLinkId] = useState(null);
 
     // Confirmation modals
@@ -693,6 +694,8 @@ export default function OwnerStaff() {
     };
 
     const handleGenerateStaffLoginLink = async (staffUser) => {
+        if (!staffUser?.id || isGeneratingLoginLinkRef.current) return;
+        isGeneratingLoginLinkRef.current = true;
         try {
             setGeneratingLoginLinkFor(staffUser.id);
             setError("");
@@ -731,6 +734,7 @@ export default function OwnerStaff() {
             });
         } finally {
             setGeneratingLoginLinkFor(null);
+            isGeneratingLoginLinkRef.current = false;
         }
     };
 
