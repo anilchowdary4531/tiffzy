@@ -52,7 +52,7 @@ jobs:
 
             echo "=== Step 4: Fetching main and checking out target commit ==="
             git fetch origin main
-            TARGET_COMMIT="39659a1c65730b79779650c3125b6eacb40e215a"
+            TARGET_COMMIT=$(git rev-parse origin/main)
             echo "Target commit: $TARGET_COMMIT"
 
             git checkout "$TARGET_COMMIT"
