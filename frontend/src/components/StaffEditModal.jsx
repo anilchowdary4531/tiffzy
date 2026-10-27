@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { API } from "../config";
 import { showToast } from "../utils/toast";
+import { mapDesignationToSystemRole } from "../utils/staffRole";
 
 export const DESIGNATION_OPTIONS = [
     "Chef",
@@ -207,12 +208,17 @@ export default function StaffEditModal({
             setSubmitting(true);
             setError("");
 
+            const inferredRole = mapDesignationToSystemRole(designation);
+            const roleToSend = staffUser?.role === "OWNER"
+                ? "OWNER"
+                : (inferredRole || String(draft.role || "STAFF").toUpperCase());
+
             const payload = {
                 name,
                 email,
                 phone,
                 designation,
-                role: String(draft.role || "STAFF").toUpperCase(),
+                role: roleToSend,
                 isActive: Boolean(draft.isActive),
             };
             if (draft.password) {
@@ -371,9 +377,15 @@ export default function StaffEditModal({
                                 <select
                                     aria-label="Designation"
                                     value={draft.designationOption}
-                                    onChange={(e) =>
-                                        setDraft((prev) => ({ ...prev, designationOption: e.target.value }))
-                                    }
+                                    onChange={(e) => {
+                                        const desig = e.target.value;
+                                        const inferredRole = mapDesignationToSystemRole(desig);
+                                        setDraft((prev) => ({
+                                            ...prev,
+                                            designationOption: desig,
+                                            role: staffUser?.role === "OWNER" ? "OWNER" : (inferredRole || prev.role),
+                                        }));
+                                    }}
                                     className="w-full p-2.5 bg-white rounded-xl border border-neutral-300 text-xs focus:ring-2 focus:ring-orange-500 outline-none"
                                 >
                                     {DESIGNATION_OPTIONS.map((desig) => (
@@ -395,9 +407,15 @@ export default function StaffEditModal({
                                     type="text"
                                     aria-label="Custom Designation"
                                     value={draft.customDesignation}
-                                    onChange={(e) =>
-                                        setDraft((prev) => ({ ...prev, customDesignation: e.target.value }))
-                                    }
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        const inferredRole = mapDesignationToSystemRole(val);
+                                        setDraft((prev) => ({
+                                            ...prev,
+                                            customDesignation: val,
+                                            role: staffUser?.role === "OWNER" ? "OWNER" : (inferredRole || prev.role),
+                                        }));
+                                    }}
                                     placeholder="Custom designation"
                                     className="w-full p-2.5 bg-white rounded-xl border border-neutral-300 text-xs focus:ring-2 focus:ring-orange-500 outline-none"
                                 />

@@ -28,12 +28,37 @@ export const inferRoleFromDesignation = (designation) => {
   return null;
 };
 
-const getEffectiveStaffRole = (user) => {
+export const mapDesignationToSystemRole = (designation) => {
+  const text = String(designation || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_-]+/g, " ");
+
+  if (!text) return null;
+
+  if (text.includes("CLEANER") || text.includes("HOUSEKEEPING")) return "STAFF";
+  if (text.includes("SWIPER")) return "STAFF";
+  if (text.includes("STEWARD")) return "WAITER";
+  if (text.includes("SERVER") || text.includes("WAITER")) return "WAITER";
+  if (text.includes("CHEF") || text.includes("COOK")) return "CHEF";
+  if (text.includes("CASHIER")) return "CASHIER";
+  if (text.includes("MANAGER")) return "MANAGER";
+  if (text.includes("OWNER")) return "OWNER";
+  if (text.includes("SUPER ADMIN")) return "SUPER_ADMIN";
+
+  return "STAFF";
+};
+
+export const getEffectiveStaffRole = (user) => {
   const baseRole = String(user?.role || "STAFF").toUpperCase();
   if (baseRole === "SUPER_ADMIN") return "SUPER_ADMIN";
-  if (baseRole && baseRole !== "STAFF") return baseRole;
+  if (baseRole === "OWNER") return "OWNER";
 
-  return inferRoleFromDesignation(user?.designation) || baseRole || "STAFF";
+  const inferred = inferRoleFromDesignation(user?.designation);
+  if (inferred) return inferred;
+
+  if (baseRole && baseRole !== "STAFF") return baseRole;
+  return "STAFF";
 };
 
 export const buildStaffLoginPayload = ({ user, normalizeDbPermissions }) => {

@@ -8,6 +8,7 @@ import { deleteAssetByKey, uploadRestaurantAsset } from "../services/storageServ
 import { requireStaffJwt } from "../services/staffAuthService.js";
 import {
   inferRoleFromDesignation,
+  mapDesignationToSystemRole,
   generateStaffLoginToken,
 } from "../services/staffSessionService.js";
 import { resolveMenuPricing } from "../services/menuPricingService.js";
@@ -142,8 +143,13 @@ export default async function ownerRoutes(app, deps = {}) {
   const resolveStaffRole = (role, designation) => {
     const normalizedRole = String(role || "STAFF").toUpperCase();
     if (normalizedRole === "SUPER_ADMIN") return "SUPER_ADMIN";
+    if (normalizedRole === "OWNER") return "OWNER";
+
+    const canonicalRole = mapDesignationToSystemRole(designation);
+    if (canonicalRole) return canonicalRole;
+
     if (normalizedRole && normalizedRole !== "STAFF") return normalizedRole;
-    return inferRoleFromDesignation(designation) || normalizedRole || "STAFF";
+    return "STAFF";
   };
   const OWNER_MANAGEMENT_ROLES = ["OWNER", "MANAGER", "SUPER_ADMIN"];
 

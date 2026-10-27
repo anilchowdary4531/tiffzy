@@ -47,12 +47,33 @@ export const inferRoleFromDesignation = (designation) => {
     return null;
 };
 
+export const mapDesignationToSystemRole = (designation) => {
+    const text = normalizeText(designation);
+    if (!text) return null;
+
+    if (text.includes("CLEANER") || text.includes("HOUSEKEEPING")) return "STAFF";
+    if (text.includes("SWIPER")) return "STAFF";
+    if (text.includes("STEWARD")) return "WAITER";
+    if (text.includes("SERVER") || text.includes("WAITER")) return "WAITER";
+    if (text.includes("CHEF") || text.includes("COOK")) return "CHEF";
+    if (text.includes("CASHIER")) return "CASHIER";
+    if (text.includes("MANAGER")) return "MANAGER";
+    if (text.includes("OWNER")) return "OWNER";
+    if (text.includes("SUPER ADMIN")) return "SUPER_ADMIN";
+
+    return "STAFF";
+};
+
 export const resolveEffectiveStaffRole = (role, designation) => {
     const normalizedRole = String(role || "").trim().toUpperCase();
     if (normalizedRole === "SUPER_ADMIN") return "SUPER_ADMIN";
-    if (normalizedRole && normalizedRole !== "STAFF") return normalizedRole;
+    if (normalizedRole === "OWNER") return "OWNER";
 
-    return inferRoleFromDesignation(designation) || normalizedRole || "STAFF";
+    const inferred = inferRoleFromDesignation(designation);
+    if (inferred) return inferred;
+
+    if (normalizedRole && normalizedRole !== "STAFF") return normalizedRole;
+    return "STAFF";
 };
 
 export const isSeniorChef = (role, designation) => {
