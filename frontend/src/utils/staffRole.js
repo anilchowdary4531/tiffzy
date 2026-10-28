@@ -12,7 +12,7 @@ export const inferRoleFromDesignation = (designation) => {
         return "STEWARD";
     }
 
-    if (text.includes("CLEANER")) {
+    if (text.includes("CLEANER") || text.includes("HOUSEKEEPING")) {
         return "CLEANER";
     }
 

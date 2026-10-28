@@ -41,6 +41,7 @@ const DESIGNATION_OPTIONS = [
     "Cashier",
     "Steward",
     "Cleaner",
+    "Housekeeping",
 ];
 
 const ROLE_OPTIONS = [
